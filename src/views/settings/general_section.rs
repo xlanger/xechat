@@ -62,6 +62,12 @@ pub fn GeneralSection() -> Element {
     let mut ollama_models: Signal<Vec<String>> = use_signal(Vec::new);
     let mut ollama_embed_models: Signal<Vec<String>> = use_signal(Vec::new);
 
+    // 嵌入模型下载状态
+    let mut model_ready: Signal<bool> = use_signal(|| crate::services::model_downloader::is_model_ready());
+    let mut model_downloading: Signal<bool> = use_signal(|| false);
+    let mut model_progress: Signal<String> = use_signal(String::new);
+    let model_error: Signal<String> = use_signal(String::new);
+
     let general_text = t!("settings.general").to_string();
     let theme_text = t!("settings.theme").to_string();
     let language_text = t!("settings.language").to_string();
@@ -309,6 +315,109 @@ pub fn GeneralSection() -> Element {
                                     });
                                 },
                             }
+                        }
+                    }
+                }
+            }
+            // 嵌入模型下载状态（仅在使用内置 E5 时显示）
+            if current_embed_provider != "ollama" {
+                div {
+                    class: "{css::form_row}",
+                    label {
+                        class: "{css::form_label}",
+                        {t!("settings.embed-model-status").to_string()}
+                    }
+                    div {
+                        class: "{css::form_value}",
+                        style: "display:flex;align-items:center;justify-content:space-between;gap:8px;",
+                        if model_ready() {
+                            span {
+                                style: "color:var(--color-success, #22c55e);font-size:13px;",
+                                {t!("settings.embed-model-ready").to_string()}
+                            }
+                        } else if model_downloading() {
+                            span {
+                                style: "color:var(--color-accent);font-size:13px;",
+                                {model_progress()}
+                            }
+                        } else {
+                            span {
+                                style: "display:flex;align-items:center;gap:8px;",
+                                span {
+                                    style: "color:var(--color-error, #ef4444);font-size:13px;",
+                                    {t!("settings.embed-model-not-found").to_string()}
+                                }
+                                if !model_error().is_empty() {
+                                    span {
+                                        style: "color:var(--text-tertiary);font-size:11px;",
+                                        {model_error()}
+                                    }
+                                }
+                                button {
+                                    style: "padding:4px 12px;font-size:12px;border-radius:6px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);cursor:pointer;",
+                                    disabled: model_downloading(),
+                                    onclick: {
+                                        let mut model_downloading = model_downloading;
+                                        let mut model_progress = model_progress;
+                                        let mut model_ready = model_ready;
+                                        let mut model_error = model_error;
+                                        move |_| {
+                                            model_downloading.set(true);
+                                            model_error.set(String::new());
+                                            model_progress.set(t!("settings.embed-model-downloading", percent = 0).to_string());
+                                            // 使用 channel 传递进度，避免 Signal 的 Send+Sync 限制
+                                            let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::services::model_downloader::DownloadProgress>(32);
+                                            // 在 spawn 中接收进度并更新 Signal
+                                            let mut model_progress = model_progress;
+                                            let mut model_ready = model_ready;
+                                            let mut model_downloading = model_downloading;
+                                            let mut model_error = model_error;
+                                            spawn(async move {
+                                                while let Some(p) = rx.recv().await {
+                                                    match p {
+                                                        crate::services::model_downloader::DownloadProgress::Downloading(downloaded, total) => {
+                                                            let percent = if total > 0 {
+                                                                (downloaded as f64 / total as f64 * 100.0) as u32
+                                                            } else {
+                                                                0
+                                                            };
+                                                            model_progress.set(t!("settings.embed-model-downloading", percent = percent).to_string());
+                                                        }
+                                                        crate::services::model_downloader::DownloadProgress::Completed => {
+                                                            model_ready.set(true);
+                                                            model_downloading.set(false);
+                                                            break;
+                                                        }
+                                                        crate::services::model_downloader::DownloadProgress::Failed(msg) => {
+                                                            model_error.set(msg);
+                                                            model_downloading.set(false);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                            // 下载任务：通过 channel 发送进度
+                                            let tx_err = tx.clone();
+                                            spawn(async move {
+                                                let on_progress = std::sync::Arc::new(move |p: crate::services::model_downloader::DownloadProgress| {
+                                                    let _ = tx.try_send(p);
+                                                });
+                                                match crate::services::model_downloader::download_model(on_progress).await {
+                                                    Ok(_) => {}
+                                                    Err(e) => {
+                                                        let _ = tx_err.try_send(crate::services::model_downloader::DownloadProgress::Failed(e.to_string()));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    },
+                                    {t!("settings.embed-model-download").to_string()}
+                                }
+                            }
+                        }
+                        span {
+                            style: "color:var(--text-tertiary);font-size:11px;",
+                            {t!("settings.embed-model-size").to_string()}
                         }
                     }
                 }

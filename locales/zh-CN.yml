@@ -158,3 +158,10 @@ settings:
   ollama-chat-provider: 对话模型
   ollama-chat-model: 对话模型
   ollama-chat-model-placeholder: 如 qwen3:7b
+  embed-model-status: 嵌入模型状态
+  embed-model-ready: 已就绪
+  embed-model-not-found: 未下载
+  embed-model-downloading: 下载中... %{percent}%
+  embed-model-download: 下载模型
+  embed-model-download-failed: 下载失败
+  embed-model-size: 约 430MB

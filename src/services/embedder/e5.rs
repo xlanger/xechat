@@ -35,13 +35,20 @@ pub struct E5Embedder {
 /// 解析模型文件路径。
 ///
 /// 按以下顺序尝试查找：
-/// 1. 开发环境：当前工作目录 / `assets/models/multilingual-e5-base-q8_0.gguf`
-/// 2. macOS 打包：`.app/Contents/Resources/assets/models/`
-/// 3. 其他平台打包：可执行文件同级目录 / `assets/models/`
+/// 1. 标准数据目录：由模型下载服务下载到的位置（跨平台标准路径）
+/// 2. 开发环境：当前工作目录 / `assets/models/multilingual-e5-base-q8_0.gguf`
+/// 3. macOS 打包：`.app/Contents/Resources/assets/models/`
+/// 4. 其他平台打包：可执行文件同级目录 / `assets/models/`
 fn resolve_model_path() -> PathBuf {
     let model_name = "multilingual-e5-base-q8_0.gguf";
 
-    // 1. 开发环境
+    // 1. 标准数据目录（模型下载服务下载到的位置）
+    let data_path = crate::services::model_downloader::get_model_path();
+    if data_path.exists() {
+        return data_path;
+    }
+
+    // 2. 开发环境
     let dev_path = std::env::current_dir()
         .unwrap_or_default()
         .join("assets")
@@ -51,7 +58,7 @@ fn resolve_model_path() -> PathBuf {
         return dev_path;
     }
 
-    // 2. 从可执行文件路径推导（打包后）
+    // 3. 从可执行文件路径推导（打包后）
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
 
@@ -80,8 +87,8 @@ fn resolve_model_path() -> PathBuf {
         }
     }
 
-    // 兜底：返回开发环境路径（不存在时会报错）
-    dev_path
+    // 兜底：返回标准数据目录路径（不存在时会报错，提示用户下载模型）
+    data_path
 }
 
 impl E5Embedder {
