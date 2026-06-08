@@ -158,3 +158,10 @@ settings:
   ollama-chat-provider: Chat Model
   ollama-chat-model: Chat Model
   ollama-chat-model-placeholder: e.g. qwen3:7b
+  embed-model-status: Embed Model Status
+  embed-model-ready: Ready
+  embed-model-not-found: Not Downloaded
+  embed-model-downloading: Downloading... %{percent}%
+  embed-model-download: Download Model
+  embed-model-download-failed: Download Failed
+  embed-model-size: ~430MB

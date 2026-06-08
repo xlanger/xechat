@@ -38,8 +38,8 @@ XEChat - Desktop AI Chat Client
 
 数据路径：
 - 配置文件: %APPDATA%\XEChat\config.toml
-- 对话数据: %LOCALAPPDATA%\xechat\lancedb\
-- 嵌入模型: %LOCALAPPDATA%\xechat\models\
+- 对话数据: %LOCALAPPDATA%\XEChat\lancedb\
+- 嵌入模型: %LOCALAPPDATA%\XEChat\models\
 
 系统要求：
 - Windows 10 或更高版本

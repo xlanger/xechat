@@ -2,12 +2,9 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET_DIR="$PROJECT_DIR/target/release"
+TARGET_DIR="${TARGET_DIR:-$PROJECT_DIR/target/release}"
 APP_NAME="XEChat"
 BUNDLE_DIR="$TARGET_DIR/$APP_NAME.app"
-
-echo "=== 构建 Release 版本 ==="
-cargo build --release --manifest-path "$PROJECT_DIR/Cargo.toml"
 
 echo "=== 创建 macOS .app Bundle ==="
 rm -rf "$BUNDLE_DIR"
@@ -64,4 +61,4 @@ echo "运行方式: open \"$BUNDLE_DIR\""
 echo "或直接双击 Finder 中的 XEChat.app"
 echo ""
 echo "配置文件路径: ~/Library/Application Support/XEChat/config.toml"
-echo "数据路径: ~/Library/Application Support/xechat/lancedb/"
+echo "数据路径: ~/Library/Application Support/XEChat/lancedb/"

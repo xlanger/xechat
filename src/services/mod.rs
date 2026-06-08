@@ -14,6 +14,7 @@ pub mod config;
 pub mod paths;
 pub mod ai;
 pub mod embedder;
+pub mod model_downloader;
 pub mod intent;
 pub mod vector_store;
 pub mod memory;

@@ -28,15 +28,7 @@ pub fn get_app_dir() -> PathBuf {
     let base = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."));
 
-    #[cfg(target_os = "linux")]
-    {
-        base.join("xechat")
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        base.join("XEChat")
-    }
+    base.join("XEChat")
 }
 
 /// 获取配置文件路径。
@@ -132,6 +124,6 @@ pub fn get_legacy_conversations_path() -> PathBuf {
 pub fn get_lancedb_path() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_default()
-        .join("xechat")
+        .join("XEChat")
         .join("lancedb")
 }

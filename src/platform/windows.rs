@@ -38,9 +38,35 @@ pub fn app_config() -> Config {
     Config::new()
 }
 
-/// 检测 Windows 系统的主题
+/// 检测 Windows 系统的主题。
+///
+/// 通过读取注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`
+/// 下的 `AppsUseLightTheme` 值判断系统主题。
+/// 值为 1 表示浅色模式，0 表示深色模式。
+/// 读取失败时默认返回深色模式。
 pub fn detect_system_theme() -> SystemTheme {
-    // Windows 主题检测实现
-    // TODO: 实际实现可通过注册表或其他方式
+    use std::process::Command;
+
+    // 通过 reg query 读取注册表值
+    if let Ok(output) = Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            "/v",
+            "AppsUseLightTheme",
+        ])
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // 输出格式如：AppsUseLightTheme    REG_DWORD    0x1
+            if stdout.contains("0x1") {
+                return SystemTheme::Light;
+            } else if stdout.contains("0x0") {
+                return SystemTheme::Dark;
+            }
+        }
+    }
+
     SystemTheme::Dark
 }

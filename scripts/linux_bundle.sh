@@ -63,9 +63,9 @@ AppImage 运行方式：
 - ./XEChat-*.AppImage
 
 数据路径：
-- 配置文件: ~/.config/xechat/config.toml
-- 对话数据: ~/.local/share/xechat/lancedb/
-- 嵌入模型: ~/.local/share/xechat/models/
+- 配置文件: ~/.config/XEChat/config.toml
+- 对话数据: ~/.local/share/XEChat/lancedb/
+- 嵌入模型: ~/.local/share/XEChat/models/
 
 系统要求：
 - Linux (64-bit)
