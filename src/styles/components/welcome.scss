@@ -1,0 +1,20 @@
+.welcome-root {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.welcome-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px;
+    box-sizing: border-box;
+}
+
+// Welcome 页中 ChatInput 不需要底部 padding
+.welcome-center .conv-input-container {
+    padding: 0;
+}

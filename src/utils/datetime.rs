@@ -1,0 +1,49 @@
+//! 日期时间格式化工具。
+//!
+//! 根据用户时区偏好将 UTC 时间转换为本地时间并格式化。
+//! 时区偏好存储在 `AppStore.timezone` signal 中，
+//! 支持系统本地时区（`"system"`）和 IANA 时区标识符。
+
+use chrono::{DateTime, Utc, Local};
+use chrono_tz::Tz;
+
+/// 将 UTC 时间转换为用户偏好时区并按指定格式输出。
+///
+/// 格式规则：
+/// - `date`：`%Y-%m-%d`
+/// - `datetime`：`%Y-%m-%d %H:%M`
+/// - `time`：`%H:%M`
+/// - `short`：`%m-%d %H:%M`
+/// - 其他值直接作为 chrono 格式字符串使用
+pub fn format_datetime(dt: &DateTime<Utc>, fmt: &str, tz_pref: &str) -> String {
+    let pattern = match fmt {
+        "date" => "%Y-%m-%d",
+        "datetime" => "%Y-%m-%d %H:%M",
+        "time" => "%H:%M",
+        "short" => "%m-%d %H:%M",
+        other => other,
+    };
+
+    if tz_pref.is_empty() || tz_pref == "system" {
+        dt.with_timezone(&Local).format(pattern).to_string()
+    } else {
+        match tz_pref.parse::<Tz>() {
+            Ok(tz) => dt.with_timezone(&tz).format(pattern).to_string(),
+            Err(_) => dt.with_timezone(&Local).format(pattern).to_string(),
+        }
+    }
+}
+
+/// 智能格式化消息时间：今天显示 `HH:MM`，否则显示 `YYYY-MM-DD HH:MM`。
+///
+/// 内部通过 `format_datetime` 比较日期字符串判断是否为今天，
+/// 避免了 `DateTime<Local>` 与 IANA 时区之间的类型转换问题。
+pub fn format_smart_time(dt: &DateTime<Utc>, tz_pref: &str) -> String {
+    let msg_date = format_datetime(dt, "date", tz_pref);
+    let today_date = format_datetime(&Utc::now(), "date", tz_pref);
+    if msg_date == today_date {
+        format_datetime(dt, "time", tz_pref)
+    } else {
+        format_datetime(dt, "datetime", tz_pref)
+    }
+}

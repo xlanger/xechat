@@ -1,0 +1,8 @@
+[application]
+name = "XEChat"
+
+[bundle]
+identifier = "com.xechat"
+publisher = "xlanger"
+icon = ["assets/icon.png"]
+resources = ["assets/"]

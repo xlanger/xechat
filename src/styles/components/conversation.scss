@@ -1,0 +1,638 @@
+// ========== 对话屏幕（conversation_screen.rs）==========
+
+.conv-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+// ---- Header ----
+
+.conv-header {
+    padding: 6px 24px;
+    min-height: 52px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    cursor: default;
+}
+
+.conv-header-title-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
+    transition: background 0.2s ease;
+}
+
+.conv-header-title-wrapper-active {
+    background: var(--bg-inset);
+}
+
+.conv-header-title {
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.2s ease;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.conv-header-title-default {
+    color: var(--text);
+}
+
+.conv-header-title-hover {
+    color: var(--color-accent);
+}
+
+.conv-header-title-active {
+    color: var(--color-accent);
+}
+
+.conv-header-arrow {
+    font-size: 14px;
+    color: var(--text-secondary);
+    transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.conv-header-arrow-hover {
+    color: var(--color-accent);
+}
+
+.conv-header-arrow-open {
+    color: var(--color-accent);
+    transform: rotate(180deg);
+}
+
+.conv-header-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 100;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-popover);
+    padding: 6px;
+    min-width: 140px;
+    margin-top: 4px;
+}
+
+.conv-header-menu-item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.conv-header-menu-item:hover {
+    background: var(--bg-inset);
+}
+
+.conv-header-menu-item-danger {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--color-danger);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.conv-header-menu-item-danger:hover {
+    background: rgba(255, 69, 58, 0.1);
+}
+
+// ---- Model Badge ----
+
+.conv-model-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-elevated);
+    border-radius: 8px;
+    font-size: 12px;
+    transition:
+        border-color 0.2s ease,
+        background 0.2s ease;
+}
+
+.conv-model-badge-provider {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.conv-model-badge-sep {
+    color: var(--text-secondary);
+    opacity: 0.4;
+}
+
+.conv-model-badge-model {
+    color: var(--text);
+    font-weight: 600;
+}
+
+// ---- Messages ----
+
+.conv-messages {
+    flex: 1;
+    overflow-y: overlay;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.conv-message-canvas {
+    width: 980px;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.conv-streaming-indicator {
+    margin-left: 52px;
+}
+
+.conv-streaming-cursor {
+    color: var(--color-accent);
+    font-size: 20px;
+    font-weight: 700;
+}
+
+// ---- Message Bubble ----
+
+.conv-msg-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.conv-msg-row-user {
+    flex-direction: row-reverse;
+}
+
+.conv-msg-avatar {
+    width: 37px;
+    height: 37px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.conv-msg-avatar-user {
+    background: var(--bg-inset);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 25%, transparent);
+    color: var(--color-accent);
+}
+
+.conv-msg-avatar-assistant {
+    /* background: color-mix(in srgb, var(--assistant-color) 10%, transparent); */
+    /* color: color-mix(in srgb, var(--assistant-color) 70%, transparent); */
+    background: var(--bg-inset);
+    box-shadow: 0 0 8px
+        color-mix(in srgb, var(--assistant-color) 15%, transparent);
+    color: var(--color-accent);
+}
+
+.conv-msg-body {
+    flex: 1;
+    display: flex;
+}
+
+.conv-msg-body-user {
+    justify-content: flex-end;
+}
+
+.conv-msg-body-assistant {
+    justify-content: flex-start;
+}
+
+.conv-msg-bubble {
+    color: var(--text);
+    box-shadow: var(--shadow-message);
+    padding: 3px 9px;
+    border-radius: 14px;
+    width: auto;
+    max-width: 876px;
+}
+
+.conv-msg-bubble-user {
+    background: var(--bg-message-user);
+    border: 1px solid var(--border);
+}
+
+.conv-msg-bubble-assistant {
+    background: var(--bg-message);
+    border: 1px solid var(--border);
+}
+
+.conv-msg-bubble-error {
+    background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+    border: 1px solid var(--color-danger);
+    opacity: 0.9;
+}
+
+.conv-msg-truncated-hint {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 6px;
+    padding: 2px 0;
+}
+
+// ---- Reasoning ----
+
+.conv-msg-reasoning {
+    margin-bottom: 8px;
+    // border-radius: 10px;
+    overflow: hidden;
+}
+
+.conv-msg-reasoning-header {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 6px 3px;
+    // background: var(--bg-inset);
+    // border: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--textsecondary);
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s ease;
+
+    &:hover {
+        color: var(--text);
+    }
+}
+
+.conv-msg-reasoning-body {
+    // padding: 0 10px 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border);
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+// ---- Input ----
+
+.conv-input-container {
+    padding: 16px 24px 24px;
+    flex-shrink: 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+.conv-input-wrapper {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 12px 16px;
+    max-width: 876px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.conv-input-textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;
+    font-family: inherit;
+    line-height: 1.6;
+    resize: none;
+    min-height: 72px;
+    max-height: 168px;
+    overflow-y: auto;
+    scrollbar-width: none;
+
+    &::-webkit-scrollbar {
+        display: none;
+    }
+}
+
+.conv-input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    gap: 8px;
+}
+
+.conv-input-model-selectors {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+// ---- 内联模型选择器 ----
+
+.conv-model-selector-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.conv-model-trigger {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px 6px 0;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: transparent;
+    transition:
+        background 0.2s ease,
+        color 0.2s ease;
+    user-select: none;
+}
+
+.conv-model-trigger:hover {
+    background: var(--bg-root);
+    color: var(--text);
+}
+
+.conv-model-trigger-open {
+    background: var(--bg-root);
+    color: var(--text);
+}
+
+.conv-model-trigger-label {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 200px;
+}
+
+.conv-model-arrow {
+    display: flex;
+    align-items: center;
+    transition: transform 0.2s ease;
+    color: var(--text-secondary);
+}
+
+.conv-model-arrow-open {
+    transform: rotate(180deg);
+    color: var(--text);
+}
+
+.conv-model-dropdown {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 100;
+    background: var(--bg-root);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-popover);
+    padding: 6px;
+    width: max-content;
+    min-width: 100%;
+    max-height: 280px;
+    overflow-y: auto;
+    animation: slideUp 0.18s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+}
+
+.conv-model-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    background: transparent;
+    transition: background 0.12s ease;
+}
+
+.conv-model-option:hover {
+    background: var(--bg-inset);
+}
+
+.conv-model-option-selected {
+    color: var(--color-accent);
+    background: var(--bg-elevated);
+}
+
+.conv-model-add {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: transparent;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+    transition:
+        background 0.12s ease,
+        color 0.12s ease;
+}
+
+.conv-model-add:hover {
+    background: var(--bg-inset);
+    color: var(--text);
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.conv-send-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+.conv-send-btn-active {
+    opacity: 1;
+    border: none;
+    background: var(--color-accent);
+    box-shadow: 0 2px 10px
+        color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+.conv-send-btn-disabled {
+    opacity: 0.4;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    color: var(--text-tertiary);
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.conv-send-btn-streaming {
+    opacity: 0.5;
+}
+
+// ========== 对话列表项（conversation_item.rs）==========
+
+.conv-item {
+    position: relative;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.conv-item-inner {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    /* border-left: 3px solid transparent; */
+    /* border: 5px solid transparent; */
+    background: transparent;
+    box-shadow: none;
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    overflow: hidden;
+}
+
+.conv-item-inner-hover {
+    background: var(--bg-inset);
+}
+
+.conv-item-inner-active {
+    /* border-left: 3px solid var(--color-accent); */
+    box-shadow: inset 3px 0 0 var(--color-accent);
+    /* border-left-color: var(--color-accent); */
+    background: var(--bg-inset);
+}
+
+.conv-item-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text);
+    transition: color 0.2s ease;
+}
+
+.conv-item-title-hover {
+    color: var(--color-accent);
+}
+
+.conv-item-title-active {
+    color: var(--color-accent);
+    font-weight: 600;
+}
+
+.conv-item-more-btn {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 14px;
+    padding: 4px;
+    border-radius: 4px;
+    transition:
+        opacity 0.15s ease,
+        background 0.15s ease,
+        color 0.15s ease;
+    opacity: 0;
+}
+
+.conv-item-more-btn-visible {
+    opacity: 1;
+}
+
+.conv-item-more-btn:hover {
+    background: var(--bg-elevated);
+}
+
+.conv-item-menu {
+    position: absolute;
+    top: calc(100% - 4px);
+    right: 8px;
+    z-index: 200;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-popover);
+    padding: 6px;
+    min-width: 140px;
+    animation: slideDown 0.18s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+}
+
+.conv-item-menu-item {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s ease;
+}
+
+.conv-item-menu-item:hover {
+    background: var(--bg-inset);
+}
+
+.conv-item-menu-item-danger {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--color-danger);
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s ease;
+}
+
+.conv-item-menu-item-danger:hover {
+    background: rgba(255, 69, 58, 0.1);
+}

@@ -1,0 +1,191 @@
+// ========== Markdown Rendering ==========
+// Styles for rendered markdown content (inline code, code blocks, tables, math, etc.)
+
+// ---- Inline Code ----
+
+code {
+    font-family:
+        "SF Mono", "Fira Code", "Cascadia Code", "JetBrains Mono", Consolas,
+        "Liberation Mono", Menlo, monospace;
+    font-size: 0.875em;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--bg-root);
+    border: 1px solid var(--border);
+    color: var(--text);
+    word-break: break-word;
+}
+
+// ---- Code Blocks (inside <pre>) ----
+
+pre {
+    margin: 0;
+    overflow-x: auto;
+}
+
+pre code {
+    font-size: 14px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    line-height: 1.6;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+}
+
+// ---- Tables ----
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+}
+
+th,
+td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    border-radius: 8px;
+}
+
+th {
+    background: var(--bg-elevated);
+    font-weight: 600;
+}
+
+tr:nth-child(even) {
+    background: var(--bg-elevated);
+}
+
+// ---- KaTeX Math ----
+
+.katex-display {
+    display: block;
+    margin: 16px 0;
+    text-align: center;
+    overflow-x: auto;
+}
+
+.katex-display .katex {
+    font-size: 1.2em;
+}
+
+// ---- Mermaid Diagrams ----
+
+.mermaid-block .m-chart-view svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.mermaid-block .m-tab {
+    transition: color 0.2s;
+    color: var(--text-secondary);
+}
+
+.mermaid-block .m-tab-active {
+    color: var(--text) !important;
+    font-weight: 500;
+}
+
+// ---- Task Lists ----
+
+input[type="checkbox"] {
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+// ---- Blockquotes / Alerts ----
+
+blockquote {
+    border-left: 1px solid var(--border);
+    padding: 4px 12px;
+    margin: 8px 0;
+    color: var(--text-secondary);
+    background: var(--bg-root);
+    border-radius: 0 6px 6px 0;
+}
+
+// ---- Horizontal Rule ----
+
+hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+}
+
+// ---- Images ----
+
+img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+}
+
+// ---- Links ----
+
+a {
+    color: var(--color-accent);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+// ---- Paragraphs & Lists ----
+
+p {
+    margin: 8px 0;
+    line-height: 1.8;
+}
+
+ul,
+ol {
+    padding-left: 24px;
+    margin: 8px 0;
+}
+
+li {
+    margin: 4px 0;
+}
+
+// ---- Mark / Highlight ----
+
+mark {
+    background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+    padding: 1px 4px;
+    border-radius: 2px;
+}
+
+// ---- Subscript / Superscript ----
+
+sub {
+    font-size: 0.75em;
+}
+
+sup {
+    font-size: 0.75em;
+}
+
+// ---- Code Syntax Highlighting (better contrast for dark theme) ----
+[data-theme="dark"] pre code {
+    // 暗色主题下，提高所有文字的亮度20%
+    filter: brightness(1.2);
+}
+
+[data-theme="dark"] pre code span {
+    /* 给文字增加一个柔和的高光描边 */
+    /* text-shadow: 0 0 2px rgba(255, 255, 255, 0.3); */
+    // 强制移除所有内联背景色，保持容器背景不变
+    background-color: transparent !important;
+    // 移除 span 上的 filter，避免双重应用
+    filter: none !important;
+}
+
+// 基础代码文字色
+pre code {
+    color: var(--text);
+}

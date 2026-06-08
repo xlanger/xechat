@@ -1,0 +1,11 @@
+[package]
+name = "dioxus_style"
+version = "0.5.0"
+edition = "2024"
+license = "MIT"
+description = "Scoped CSS styling for Dioxus (forked for XEChat)"
+repository = "https://github.com/xlanger/xechat"
+
+[dependencies]
+dioxus_style_macro = { path = "../dioxus-style-macro" }
+dioxus-core = "0.7"

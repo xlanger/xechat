@@ -1,0 +1,8 @@
+// ========== Glassmorphism Materials ==========
+// Backdrop-filter presets for frosted-glass UI surfaces.
+
+:root {
+    --material-sidebar: blur(20px) saturate(180%);
+    --material-popover: blur(40px) saturate(200%);
+    --material-titlebar: blur(15px) saturate(160%);
+}

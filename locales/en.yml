@@ -1,0 +1,160 @@
+app:
+  title: XEChat
+  slogan: X empowered by chat
+
+common:
+  please-select: — Please Select —
+
+sidebar:
+  new-chat: New Chat
+  config: Settings
+
+welcome:
+  title: Welcome to XEChat
+  subtitle: X empowered by chat
+  start-chat: Start New Chat
+
+chat:
+  input-placeholder: Ask anything...
+  header-model: Model
+  status-sending: Sending...
+  status-sent: Sent
+  status-failed: Failed
+  status-truncated: Generation stopped
+  reasoning: Reasoning
+
+search:
+  question: Q
+  answer: A
+  fulltext: FullText
+  semantic: Semantic
+  hybrid: Hybrid
+  fulltextmatch: Full Text Match
+  semanticmatch: Semantic Match
+  hybridmatch: Hybrid Match
+  semantic-related: "%{percent}% Semantic Related"
+  count-messages: "%{count} messages"
+  count-total-messages: "%{count} / %{total} messages"
+  count-conversations: "%{count} conversations"
+  recent-conversations: Recent Conversations
+  search-placeholder: Search history conversations...
+  no-results: No results found
+
+preview:
+  loading: Loading...
+  scroll-up: "↑ Scroll up to load more"
+  scroll-down: "↓ Scroll down to load more"
+  empty: Select a search result to preview the conversation
+
+conversation:
+  default-title: New Conversation
+
+menu:
+  rename: Rename
+  delete: Delete
+
+modal:
+  rename-title: Rename Chat
+  rename-placeholder: Enter chat name...
+  delete-title: Delete Chat
+  delete-message: Are you sure you want to delete this chat? This action cannot be undone.
+  cancel: Cancel
+  confirm: Confirm
+  save: Save
+  delete-confirm: Delete
+
+config:
+  title: Settings
+  provider: Model Provider
+  model: Model
+  path: Config file
+  tip: Edit config.toml to add new providers or modify API keys
+
+toast:
+  config-saved: Configuration saved successfully
+  conversation-created: New chat created
+  conversation-renamed: Chat renamed
+  conversation-deleted: Chat deleted
+  error: Error
+
+error:
+  network: Network error
+  auth:
+    invalid-key: Invalid API key format
+    unauthorized: Authentication failed (401). Please check your API Key in config
+  api:
+    http-error: API request failed
+  stream:
+    read-error: Stream read error
+  config:
+    failed: Config operation failed
+  io:
+    failed: File operation failed
+  serialization:
+    parse-error: Parsing error
+  invalid-input: Invalid input
+  unsupported: Unsupported
+
+settings:
+  title: Settings
+  close: Close
+  save: Save
+  saved: Configuration saved
+  save-failed: Failed to save configuration
+  general: General
+  conversation: Conversation
+  models: Model Providers
+  theme: Theme
+  language: Language
+  theme-system: System
+  theme-dark: Dark
+  theme-light: Light
+  lang-system: System
+  lang-zh: 中文
+  lang-en: English
+  timezone: Timezone
+  tz-system: System
+  current-embed-model: Embed Model
+  embed-provider: Embed Provider
+  chat-provider: Chat Provider
+  chat-model: Chat Model
+  no-models: No models, please add one
+  provider-name: Provider Name
+  api-key: API Key
+  api-key-placeholder: Enter API Key, leave empty to read from env var {env}
+  base-url: Base URL
+  timeout: Timeout (seconds)
+  model-params: Model Parameters
+  max-tokens: Max Output Tokens
+  temperature: Temperature (0-2)
+  top-p: Top P (0-1)
+  frequency-penalty: Freq Penalty
+  presence-penalty: Pres Penalty
+  context-window: Context Window
+  stop-sequences: Stop Sequences
+  stop-sequences-placeholder: "Comma-separated, e.g.: \\n,###"
+  config-path: Config file path
+  config-tip: Changes will be saved automatically
+  memory: Memory & Search
+  memory-max-results: Max Memory Results
+  memory-ollama-host: Ollama Host
+  memory-ollama-host-placeholder: http://localhost:11434
+  memory-ollama-model: Ollama Embed Model (Optional)
+  memory-ollama-model-placeholder: e.g. BAAI/bge-base-en-v1.5
+  memory-ollama-chat-model: Ollama Chat Model (Optional)
+  memory-ollama-chat-model-placeholder: e.g. qwen3:7b
+  add-model: Add Model
+  add-model-placeholder: Enter model name
+  openai-compatible: OpenAI Compatible
+  delete-model: Delete Model
+  ollama: Ollama Extension
+  ollama-host: Host
+  ollama-host-placeholder: http://localhost:11434
+  ollama-embed-provider: Embed Model
+  ollama-embed-provider-default: E5 Base (Built-in)
+  ollama-embed-provider-ollama: Ollama Extension
+  ollama-embed-model: Embed Model
+  ollama-embed-model-placeholder: e.g. BAAI/bge-base-en-v1.5
+  ollama-chat-provider: Chat Model
+  ollama-chat-model: Chat Model
+  ollama-chat-model-placeholder: e.g. qwen3:7b

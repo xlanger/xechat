@@ -1,0 +1,35 @@
+# Logs
+logs
+*.log
+
+# Dependencies
+node_modules
+app_design
+docs/superpowers/*
+
+# Build outputs
+target
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+.trae
+.venv
+.superpowers
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python
+__pycache__
+.ipynb_checkpoints
+
+# Models
+*.gguf

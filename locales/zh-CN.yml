@@ -1,0 +1,160 @@
+app:
+  title: XEChat
+  slogan: 对话赋能
+
+common:
+  please-select: — 请选择 —
+
+sidebar:
+  new-chat: 新对话
+  config: 设置
+
+welcome:
+  title: 欢迎使用 XEChat
+  subtitle: 对话赋能
+  start-chat: 开始新对话
+
+chat:
+  input-placeholder: 多想多问...
+  header-model: 模型
+  status-sending: 发送中...
+  status-sent: 已发送
+  status-failed: 发送失败
+  status-truncated: 已停止生成
+  reasoning: 推理过程
+
+search:
+  question: 问
+  answer: 答
+  fulltext: 全文
+  semantic: 语义
+  hybrid: 混合
+  fulltextmatch: 全文匹配
+  semanticmatch: 语义匹配
+  hybridmatch: 混合匹配
+  semantic-related: "%{percent}% 语义相关"
+  count-messages: "%{count} 条消息"
+  count-total-messages: "%{count} / %{total} 条消息"
+  count-conversations: "%{count} 条"
+  recent-conversations: 最近对话
+  search-placeholder: 搜索历史对话...
+  no-results: 未找到相关结果
+
+preview:
+  loading: 加载中...
+  scroll-up: "↑ 向上滚动加载更多"
+  scroll-down: "↓ 向下滚动加载更多"
+  empty: 选择一条搜索结果以预览对话内容
+
+conversation:
+  default-title: 新对话
+
+menu:
+  rename: 修改名称
+  delete: 删除
+
+modal:
+  rename-title: 修改对话名称
+  rename-placeholder: 输入对话名称...
+  delete-title: 删除对话
+  delete-message: 确定要删除这个对话吗？此操作不可恢复。
+  cancel: 取消
+  confirm: 确认
+  save: 保存
+  delete-confirm: 删除
+
+config:
+  title: 设置
+  provider: 模型提供商
+  model: 模型
+  path: 配置文件
+  tip: 编辑 config.toml 添加新提供商或修改 API Key
+
+toast:
+  config-saved: 配置已保存
+  conversation-created: 新对话已创建
+  conversation-renamed: 对话已重命名
+  conversation-deleted: 对话已删除
+  error: 错误
+
+error:
+  network: 网络错误
+  auth:
+    invalid-key: API Key 格式无效
+    unauthorized: 认证失败 (401)，请检查配置文件中的 API Key
+  api:
+    http-error: API 请求失败
+  stream:
+    read-error: 流读取错误
+  config:
+    failed: 配置操作失败
+  io:
+    failed: 文件操作失败
+  serialization:
+    parse-error: 解析错误
+  invalid-input: 输入无效
+  unsupported: 不支持
+
+settings:
+  title: 设置
+  close: 关闭
+  save: 保存
+  saved: 配置已保存
+  save-failed: 配置保存失败
+  general: 通用
+  conversation: 会话
+  models: 模型提供商
+  theme: 界面主题
+  language: 语言
+  theme-system: 跟随系统
+  theme-dark: 暗色模式
+  theme-light: 亮色模式
+  lang-system: 跟随系统
+  lang-zh: 中文
+  lang-en: English
+  timezone: 时区
+  tz-system: 跟随系统
+  current-embed-model: 嵌入模型
+  embed-provider: 嵌入提供商
+  chat-provider: 对话提供商
+  chat-model: 对话模型
+  no-models: 暂无模型，请先添加
+  provider-name: 提供商名称
+  api-key: API Key
+  api-key-placeholder: 输入 API Key，留空则读取环境变量 {env}
+  base-url: Base URL
+  timeout: 超时时间（秒）
+  model-params: 模型参数
+  max-tokens: 最大输出 Token 数
+  temperature: 温度（0-2）
+  top-p: Top P（0-1）
+  frequency-penalty: 频率惩罚
+  presence-penalty: 存在惩罚
+  context-window: 上下文窗口
+  stop-sequences: 停止序列
+  stop-sequences-placeholder: "逗号分隔，如：\\n,###"
+  config-path: 配置文件路径
+  config-tip: 修改将自动保存到配置文件
+  memory: 记忆与搜索
+  memory-max-results: 记忆检索最大条数
+  memory-ollama-host: Ollama 服务地址
+  memory-ollama-host-placeholder: http://localhost:11434
+  memory-ollama-model: Ollama 嵌入模型（可选）
+  memory-ollama-model-placeholder: 如 BAAI/bge-base-zh-v1.5
+  memory-ollama-chat-model: Ollama 聊天模型（可选）
+  memory-ollama-chat-model-placeholder: 如 qwen3:7b
+  add-model: 添加模型
+  add-model-placeholder: 输入模型名称
+  openai-compatible: OpenAI Compatible
+  delete-model: 删除模型
+  ollama: Ollama 扩展
+  ollama-host: 服务地址
+  ollama-host-placeholder: http://localhost:11434
+  ollama-embed-provider: 嵌入模型
+  ollama-embed-provider-default: E5 Base（内置）
+  ollama-embed-provider-ollama: Ollama 扩展
+  ollama-embed-model: 嵌入模型
+  ollama-embed-model-placeholder: 如 BAAI/bge-base-zh-v1.5
+  ollama-chat-provider: 对话模型
+  ollama-chat-model: 对话模型
+  ollama-chat-model-placeholder: 如 qwen3:7b

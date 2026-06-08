@@ -1,0 +1,80 @@
+// ========== Theme Variables ==========
+// CSS custom properties mapped from tokens.scss.
+// Components should only use these CSS variables, never tokens directly.
+
+@import "tokens";
+
+// ========== Light Mode (Default) ==========
+
+:root,
+[data-theme="light"] {
+    --color-accent: #{$accent-light};
+    --color-accent-hover: #{$accent-hover-light};
+    --color-danger: #{$danger-light};
+    --color-danger-hover: #{$danger-hover-light};
+    --color-success: #{$success-light};
+    --color-warning: #{$warning-light};
+
+    --bg-root: #{$bg-root-light};
+    --bg-sidebar: #{$bg-sidebar-light};
+    --bg-surface: #{$bg-surface-light};
+    --bg-elevated: #{$bg-elevated-light};
+    --bg-inset: #{$bg-inset-light};
+
+    --bg-message: #{$bg-message-light};
+    --bg-message-user: #{$bg-message-user-light};
+    --bg-input: #{$bg-input-light};
+
+    --text: #{$text-light};
+    --text-secondary: #{$text-secondary-light};
+    --text-tertiary: #{$text-tertiary-light};
+    --text-placeholder: #{$text-placeholder-light};
+
+    --border: #{$border-light};
+    --border-elevated: #{$border-elevated-light};
+
+    --shadow-sm: #{$shadow-sm-light};
+    --shadow-md: #{$shadow-md-light};
+    --shadow-popover: #{$shadow-popover-light};
+    --shadow-message: #{$shadow-message-light};
+    --shadow-card: #{$shadow-card-light};
+
+    --assistant-color: #{$assistant-light};
+}
+
+// ========== Dark Mode ==========
+
+[data-theme="dark"] {
+    --color-accent: #{$accent-dark};
+    --color-accent-hover: #{$accent-hover-dark};
+    --color-danger: #{$danger-dark};
+    --color-danger-hover: #{$danger-hover-dark};
+    --color-success: #{$success-dark};
+    --color-warning: #{$warning-dark};
+
+    --bg-root: #{$bg-root-dark};
+    --bg-sidebar: #{$bg-sidebar-dark};
+    --bg-surface: #{$bg-surface-dark};
+    --bg-elevated: #{$bg-elevated-dark};
+    --bg-inset: #{$bg-inset-dark};
+
+    --bg-message: #{$bg-message-dark};
+    --bg-message-user: #{$bg-message-user-dark};
+    --bg-input: #{$bg-input-dark};
+
+    --text: #{$text-dark};
+    --text-secondary: #{$text-secondary-dark};
+    --text-tertiary: #{$text-tertiary-dark};
+    --text-placeholder: #{$text-placeholder-dark};
+
+    --border: #{$border-dark};
+    --border-elevated: #{$border-elevated-dark};
+
+    --shadow-sm: #{$shadow-sm-dark};
+    --shadow-md: #{$shadow-md-dark};
+    --shadow-popover: #{$shadow-popover-dark};
+    --shadow-message: #{$shadow-message-dark};
+    --shadow-card: #{$shadow-card-dark};
+
+    --assistant-color: #{$assistant-dark};
+}

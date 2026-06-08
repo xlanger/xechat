@@ -1,0 +1,159 @@
+// ========== Design Tokens ==========
+// Primitive values used by theme.scss to build CSS custom properties.
+// No component should import this directly; use CSS variables instead.
+
+// ========== Primitive Colors ==========
+
+// Gray scale (light mode base)
+$gray-5: #ffffff;
+$gray-15: #fefefe;
+$gray-25: #fcfcfc;
+$gray-50: #fafafa;
+$gray-100: #f5f5f5;
+$gray-200: #f0f0f0;
+$gray-300: #e8e8e8;
+$gray-400: #d0d0d0;
+$gray-500: #b0b0b0;
+$gray-600: #808080;
+$gray-700: #505050;
+$gray-800: #303030;
+$gray-900: #1a1a1a;
+
+// Gray scale (dark mode base)
+$gray-dark-0: #000000;
+$gray-dark-5: #050505;
+$gray-dark-10: #0a0a1a;
+$gray-dark-15: #0f0f0f;
+$gray-dark-20: #141414;
+$gray-dark-25: #191919;
+$gray-dark-50: #2e2e2e;
+$gray-dark-100: #3a3a3c;
+$gray-dark-200: #545458;
+$gray-dark-300: #6e6e73;
+$gray-dark-400: #8e8e93;
+$gray-dark-500: #aeaeb2;
+$gray-dark-600: #c7c7cc;
+$gray-dark-700: #d1d1d6;
+$gray-dark-800: #e5e5ea;
+$gray-dark-900: #f2f2f7;
+
+// Accent
+$accent-light: #0a84ff;
+$accent-hover-light: #409cff;
+$accent-dark: #4a90e2;
+$accent-hover-dark: #357abd;
+
+// Semantic colors (light)
+$danger-light: #ff3b30;
+$danger-hover-light: #ff6259;
+$success-light: #34c759;
+$warning-light: #ff9500;
+
+// Semantic colors (dark)
+$danger-dark: #ff453a;
+$danger-hover-dark: #ff6961;
+$success-dark: #30d158;
+$warning-dark: #ff9f0a;
+
+// Assistant brand color (purple)
+$assistant-light: #0a84ff;
+$assistant-dark: #4a90e2;
+
+// ========== Background Colors (Light) ==========
+
+$bg-root-light: $gray-50;
+$bg-sidebar-light: $gray-50;
+$bg-surface-light: $gray-15;
+$bg-elevated-light: $gray-200;
+$bg-inset-light: $gray-300;
+
+$bg-message-light: $gray-15;
+$bg-message-user-light: $gray-15;
+$bg-input-light: $gray-15;
+
+// ========== Background Colors (Dark) ==========
+
+$bg-root-dark: $gray-dark-25;
+$bg-sidebar-dark: $gray-dark-25;
+$bg-surface-dark: $gray-dark-15;
+$bg-elevated-dark: $gray-dark-20;
+$bg-inset-dark: $gray-dark-10;
+
+$bg-message-dark: $gray-dark-15;
+$bg-message-user-dark: $gray-dark-15;
+$bg-input-dark: $gray-dark-15;
+
+// ========== Text Colors (Light) ==========
+
+$text-light: rgba(0, 0, 0, 0.85);
+$text-secondary-light: rgba(0, 0, 0, 0.5);
+$text-tertiary-light: rgba(0, 0, 0, 0.3);
+$text-placeholder-light: rgba(0, 0, 0, 0.2);
+
+// ========== Text Colors (Dark) ==========
+
+$text-dark: rgba(255, 255, 255, 0.7);
+$text-secondary-dark: rgba(255, 255, 255, 0.5);
+$text-tertiary-dark: rgba(255, 255, 255, 0.35);
+$text-placeholder-dark: rgba(255, 255, 255, 0.25);
+
+// ========== Border Colors (Light) ==========
+
+$border-light: rgba(60, 60, 67, 0.2);
+$border-elevated-light: $gray-400;
+
+// ========== Border Colors (Dark) ==========
+
+$border-dark: rgba(84, 84, 88, 0.65);
+$border-elevated-dark: $gray-dark-200;
+
+// ========== Shadows (Light) ==========
+
+$shadow-sm-light: 0 1px 2px rgba(0, 0, 0, 0.06);
+$shadow-md-light: 0 4px 12px rgba(0, 0, 0, 0.1);
+$shadow-popover-light: 0 8px 32px rgba(0, 0, 0, 0.15);
+$shadow-message-light: 0 1px 3px rgba(0, 0, 0, 0.08);
+$shadow-card-light: 0 2px 8px rgba(0, 0, 0, 0.06);
+
+// ========== Shadows (Dark) ==========
+
+$shadow-sm-dark: 0 1px 2px rgba(0, 0, 0, 0.3);
+$shadow-md-dark: 0 4px 12px rgba(0, 0, 0, 0.4);
+$shadow-popover-dark: 0 8px 32px rgba(0, 0, 0, 0.5);
+$shadow-message-dark: 0 1px 3px rgba(0, 0, 0, 0.3);
+$shadow-card-dark: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+// ========== Spacing ==========
+
+$space-1: 4px;
+$space-2: 8px;
+$space-3: 12px;
+$space-4: 16px;
+$space-5: 20px;
+$space-6: 24px;
+$space-8: 32px;
+$space-10: 40px;
+
+// ========== Border Radius ==========
+
+$radius-sm: 6px;
+$radius-md: 8px;
+$radius-lg: 10px;
+$radius-xl: 12px;
+$radius-full: 9999px;
+
+// ========== Typography ==========
+
+$text-xs: 12px;
+$text-sm: 14px;
+$text-base: 16px;
+$text-lg: 18px;
+$text-xl: 20px;
+$text-2xl: 24px;
+$text-3xl: 30px;
+
+// ========== Transitions ==========
+
+$transition-fast: 0.2s ease;
+$transition-base: 0.25s cubic-bezier(0.34, 1.4, 0.64, 1);
+$transition-slow: 0.5s ease;

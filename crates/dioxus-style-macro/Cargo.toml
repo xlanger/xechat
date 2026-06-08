@@ -1,0 +1,16 @@
+[package]
+name = "dioxus_style_macro"
+version = "0.5.0"
+edition = "2024"
+license = "MIT"
+description = "Proc-macro crate for dioxus_style"
+repository = "https://github.com/xlanger/xechat"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+grass = "0.13"

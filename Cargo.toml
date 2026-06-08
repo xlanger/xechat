@@ -1,0 +1,172 @@
+[workspace]
+members = ["crates/dioxus-style", "crates/dioxus-style-macro"]
+resolver = "2"
+
+[package]
+name = "xechat"
+version = "0.1.1"
+description = "XEChat - Desktop AI Chat Client"
+authors = ["xlanger"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/xlanger/xechat"
+readme = "README.md"
+keywords = ["chat", "ai", "llm", "dioxus", "desktop"]
+categories = ["gui", "applications"]
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "xechat"
+path = "src/main.rs"
+
+[[test]]
+name = "services_ai_streaming_test"
+path = "tests/services/ai/streaming_test.rs"
+
+[[test]]
+name = "components_input_test"
+path = "tests/components/input_test.rs"
+
+[[test]]
+name = "components_conversation_screen_test"
+path = "tests/components/conversation_screen_test.rs"
+
+[[test]]
+name = "models_config_test"
+path = "tests/models/config_test.rs"
+
+[[test]]
+name = "services_conversation_test"
+path = "tests/services/conversation_test.rs"
+
+[[test]]
+name = "stores_ui_test"
+path = "tests/stores/ui_test.rs"
+
+[[test]]
+name = "stores_conversation_test"
+path = "tests/stores/conversation_test.rs"
+
+[[test]]
+name = "stores_app_test"
+path = "tests/stores/app_test.rs"
+
+[[test]]
+name = "models_conversation_test"
+path = "tests/models/conversation_test.rs"
+
+[[test]]
+name = "models_message_test"
+path = "tests/models/message_test.rs"
+
+[[test]]
+name = "models_error_test"
+path = "tests/models/error_test.rs"
+
+[[test]]
+name = "models_ai_test"
+path = "tests/models/ai_test.rs"
+
+[[test]]
+name = "models_i18n_test"
+path = "tests/models/i18n_test.rs"
+
+[[test]]
+name = "services_embedder_test"
+path = "tests/services/embedder_test.rs"
+
+[[test]]
+name = "services_intent_test"
+path = "tests/services/intent_test.rs"
+
+[[test]]
+name = "models_memory_test"
+path = "tests/models/memory_test.rs"
+
+[[test]]
+name = "state_test"
+path = "tests/state_test.rs"
+
+[[test]]
+name = "services_memory_test"
+path = "tests/services/memory_test.rs"
+
+[[test]]
+name = "services_vector_store_test"
+path = "tests/services/vector_store_test.rs"
+
+[[test]]
+name = "services_ollama_test"
+path = "tests/services/ollama_test.rs"
+
+[[test]]
+name = "services_conversation_store_test"
+path = "tests/services/conversation_store_test.rs"
+
+[[test]]
+name = "utils_html_test"
+path = "tests/utils/html_test.rs"
+
+[[test]]
+name = "utils_markdown_test"
+path = "tests/utils/markdown_test.rs"
+
+[[test]]
+name = "utils_paths_test"
+path = "tests/utils/paths_test.rs"
+
+[dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
+image = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures-util = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+toml = "0.8"
+dirs = "5"
+regex = "1.10"
+comrak = { version = "0.52", features = ["syntect"] }
+katex = "0.4"
+lazy_static = "1"
+mermaid-rs-renderer = { version = "0.2", default-features = false }
+once_cell = "1"
+tokio-stream = "0.1"
+base64 = "0.22"
+dioxus_style = { path = "crates/dioxus-style" }
+rust-i18n = "3"
+
+# 向量数据库
+lancedb = "0.30"
+arrow-array = "58"
+arrow-schema = "58"
+
+# GGUF 推理（E5 嵌入）— embellama 封装 llama-cpp-2
+embellama = "0.10"
+
+# 错误处理
+anyhow = "1"
+async-trait = "0.1.89"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[dev-dependencies]
+mockall = "0.13"
+tempfile = "3"
+pretty_assertions = "1"
+serial_test = "3"
+
+[build-dependencies]
+grass = "0.13"

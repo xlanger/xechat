@@ -1,0 +1,179 @@
+//! SSE 流式响应处理工具。
+//!
+//! 提供 Server-Sent Events 解析、token 估算、上下文压缩、错误消息提取等纯函数。
+//! 本模块属于 services 层，依赖 `crate::models::ai` 提供的数据类型。
+
+use crate::models::ai::{ChatMessage, StreamEvent};
+use crate::models::error::AppError;
+use futures_util::StreamExt;
+use reqwest::Response;
+use tokio::sync::mpsc;
+
+const MIN_KEEP_MESSAGES: usize = 4;
+
+/// 最大上下文消息条数（硬上限），超过则强制截断。
+const MAX_CONTEXT_MESSAGES: usize = 20;
+
+/// 估算文本对应的 token 数量。
+///
+/// 基于字符数除以 3.5 的近似算法：英文约 4 字符/token，中文约 1-2 字符/token。
+///
+/// # Arguments
+///
+/// * `text` - 待估算的文本
+///
+/// # Returns
+///
+/// 估算的 token 数量，空字符串返回 0。
+pub fn estimate_tokens(text: &str) -> usize {
+    let char_count = text.chars().count();
+    if char_count == 0 {
+        return 0;
+    }
+    (char_count as f64 / 3.5).ceil() as usize
+}
+
+/// 压缩对话消息列表以适配模型上下文窗口。
+///
+/// 当消息总 token 数超过 `max_tokens` 时，从头部逐条移除旧消息，
+/// 直至满足限制或达到最小保留条数（4 条）。
+///
+/// # Arguments
+///
+/// * `messages` - 原始对话消息列表
+/// * `max_tokens` - 模型允许的最大上下文 token 数
+/// * `auto_management` - 是否启用自动压缩；关闭时原样返回
+///
+/// # Returns
+///
+/// 压缩后的消息副本。当 `auto_management` 为 false 或消息为空时原样返回。
+pub fn compress_messages(
+    messages: &[ChatMessage],
+    max_tokens: u32,
+    auto_management: bool,
+) -> Vec<ChatMessage> {
+    if !auto_management || messages.is_empty() {
+        return messages.to_vec();
+    }
+
+    // 先按消息条数截断（硬上限）
+    let mut selected: Vec<ChatMessage> = if messages.len() > MAX_CONTEXT_MESSAGES {
+        messages[messages.len() - MAX_CONTEXT_MESSAGES..].to_vec()
+    } else {
+        messages.to_vec()
+    };
+
+    // 再按 token 数截断
+    let max_tokens = max_tokens as usize;
+    while selected.len() > MIN_KEEP_MESSAGES {
+        let current_total: usize = selected.iter().map(|m| estimate_tokens(&m.content)).sum();
+        if current_total <= max_tokens {
+            break;
+        }
+        selected.remove(0);
+    }
+
+    selected
+}
+
+/// 从 HTTP 错误响应体中提取可读的错误消息。
+///
+/// 尝试解析 OpenAI 兼容格式 `{"error":{"message":"..."}}` 的 JSON 结构。
+///
+/// # Arguments
+///
+/// * `body` - HTTP 响应体文本
+///
+/// # Returns
+///
+/// 解析成功返回 `Some(message)`，否则返回 `None`。
+pub fn extract_error_from_body(body: &str) -> Option<String> {
+    if let Some(pos) = body.find("{\"error\":") {
+        let slice = &body[pos..];
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(slice)
+            && let Some(msg) = parsed["error"]["message"].as_str() {
+                return Some(msg.to_string());
+            }
+    }
+    None
+}
+
+/// 解析 SSE (Server-Sent Events) 流式响应。
+///
+/// 从 HTTP Response 的字节流中逐行读取 SSE 数据行，
+/// 解析 `data: ` 前缀的 JSON 并通过 channel 推送 `StreamEvent`。
+///
+/// 遇到 `data: [DONE]` 标记流结束，任何读取错误也会终止解析并推送 Error 事件。
+///
+/// # Arguments
+///
+/// * `response` - 已建立的 HTTP 流式响应
+/// * `tx` - 用于推送 StreamEvent 的 channel 发送端
+pub async fn parse_sse_stream(
+    response: Response,
+    tx: mpsc::UnboundedSender<StreamEvent>,
+) {
+    use crate::models::ai::ChatResponse;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk_result) = stream.next().await {
+        match chunk_result {
+            Ok(chunk) => {
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                let lines: Vec<String> = buffer.lines().map(|l| l.to_owned()).collect();
+                buffer.clear();
+
+                for (i, line) in lines.iter().enumerate() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" {
+                            let _ = tx.send(StreamEvent::Complete);
+                            return;
+                        }
+                        if let Ok(resp) = serde_json::from_str::<ChatResponse>(data) {
+                            if let Some(delta) = resp
+                                .choices
+                                .first()
+                                .and_then(|c| c.delta.as_ref())
+                            {
+                                if let Some(content) = delta.content.as_ref() {
+                                    let _ = tx.send(StreamEvent::Chunk(content.clone()));
+                                }
+                                if let Some(reasoning) = delta.reasoning_content.as_ref() {
+                                    let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.clone()));
+                                }
+                            }
+                        } else if let Ok(err_resp) =
+                            serde_json::from_str::<serde_json::Value>(data)
+                        {
+                            if let Some(error_msg) = err_resp["error"]["message"].as_str() {
+                                let _ = tx.send(StreamEvent::Error(AppError::Api {
+                                    status: 0,
+                                    body: Some(error_msg.to_string()),
+                                }));
+                                return;
+                            }
+                        }
+                    } else if line.starts_with("event:")
+                        || line.starts_with("id:")
+                        || line.starts_with("retry:")
+                    {
+                    } else if line.is_empty() {
+                    } else if i == lines.len() - 1 {
+                        buffer.push_str(line);
+                        buffer.push('\n');
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(StreamEvent::Error(AppError::Stream { detail: e.to_string() }));
+                return;
+            }
+        }
+    }
+
+    let _ = tx.send(StreamEvent::Complete);
+}
+

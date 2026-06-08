@@ -1,0 +1,216 @@
+.settings-page {
+    background-color: var(--bg-surface);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 24px;
+    min-height: 52px;
+    border-bottom: 1px solid var(--border);
+    background-color: var(--bg-surface);
+    flex-shrink: 0;
+}
+
+.settings-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text);
+}
+
+.settings-close-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.settings-close-btn:hover {
+    background: var(--bg-inset);
+    color: var(--text);
+}
+
+.settings-content {
+    flex: 1;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.settings-content-inner {
+    max-width: 876px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.settings-section {
+    margin-bottom: 32px;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 16px 0;
+    color: var(--text);
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--border);
+}
+
+.form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.form-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.form-value {
+    display: flex;
+    align-items: center;
+    min-height: 42px;
+    padding: 0 14px;
+    background: var(--bg-root);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.form-row-inline {
+    display: flex;
+    flex-direction: row;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.form-row-inline .form-row {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.provider-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 0;
+}
+
+.model-subsection {
+    margin-top: 20px;
+    padding: 16px;
+    background-color: var(--bg-root);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+.model-name {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 12px 0;
+    color: var(--text-secondary);
+}
+
+.model-params-row {
+    display: flex;
+    flex-direction: row;
+    gap: 16px;
+}
+
+.model-params-row .form-row {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.form_row_compact {
+    flex: 1;
+    min-width: 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.form_label_compact {
+    display: block;
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+}
+
+.model_name_row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.model_name_row .model-name {
+    margin: 0 0 12px 0;
+}
+
+.model_delete_btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 14px;
+    line-height: 1;
+    border-radius: 4px;
+    &:hover {
+        color: var(--color-error, #ef4444);
+        background: var(--bg-hover, rgba(255, 255, 255, 0.05));
+    }
+}
+
+.add_model_row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.add_model_btn {
+    background: none;
+    border: 1px dashed var(--border, rgba(255, 255, 255, 0.1));
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    &:hover {
+        color: var(--text);
+        border-color: var(--text);
+    }
+}
+
+.add_model_input {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 13px;
+    background: var(--bg-root);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    outline: none;
+    &:focus {
+        border-color: var(--text-secondary);
+    }
+}
