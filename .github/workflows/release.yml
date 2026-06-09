@@ -12,6 +12,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # 模型文件名（作为 Release asset 上传）
   MODEL_FILENAME: multilingual-e5-base-q8_0.gguf
 
