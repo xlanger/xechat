@@ -20,7 +20,7 @@ jobs:
   build-macos-arm64:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
@@ -35,7 +35,6 @@ jobs:
       - name: Create .app bundle
         run: bash scripts/macos_bundle.sh
         env:
-          # 覆盖 TARGET_DIR 以使用带 target triple 的路径
           TARGET_DIR: target/aarch64-apple-darwin/release
 
       - name: Create DMG
@@ -48,10 +47,12 @@ jobs:
             --icon-size 100 \
             --app-drop-link 400 200 \
             "XEChat-macos-arm64.dmg" \
-            "target/aarch64-apple-darwin/release/XEChat.app"
+            "$TARGET_DIR/XEChat.app"
+        env:
+          TARGET_DIR: target/aarch64-apple-darwin/release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: xechat-macos-arm64
           path: XEChat-macos-arm64.dmg
@@ -59,7 +60,7 @@ jobs:
   build-macos-x86_64:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
@@ -70,6 +71,9 @@ jobs:
 
       - name: Build
         run: cargo build --release --target x86_64-apple-darwin
+        env:
+          # 交叉编译时禁用 AVX-512，避免 lance-linalg 链接失败
+          RUSTFLAGS: "-C target-feature=-avx512f,-avx512bw,-avx512cd,-avx512dq,-avx512vl"
 
       - name: Create .app bundle
         run: bash scripts/macos_bundle.sh
@@ -86,10 +90,12 @@ jobs:
             --icon-size 100 \
             --app-drop-link 400 200 \
             "XEChat-macos-x86_64.dmg" \
-            "target/x86_64-apple-darwin/release/XEChat.app"
+            "$TARGET_DIR/XEChat.app"
+        env:
+          TARGET_DIR: target/x86_64-apple-darwin/release
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: xechat-macos-x86_64
           path: XEChat-macos-x86_64.dmg
@@ -97,7 +103,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -118,7 +124,7 @@ jobs:
         run: bash scripts/linux_bundle.sh
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: xechat-linux-x86_64
           path: target/release/XEChat-linux-x86_64.tar.gz
@@ -126,7 +132,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
@@ -152,7 +158,7 @@ jobs:
           Compress-Archive -Path XEChat-windows -DestinationPath XEChat-windows-x86_64.zip
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: xechat-windows-x86_64
           path: XEChat-windows-x86_64.zip
@@ -163,10 +169,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: artifacts
 
