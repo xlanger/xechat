@@ -57,7 +57,7 @@ jobs:
           path: XEChat-macos-arm64.dmg
 
   build-macos-x86_64:
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
