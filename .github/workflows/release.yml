@@ -69,11 +69,34 @@ jobs:
       - name: Install protoc
         run: brew install protobuf
 
+      - name: Create cc wrapper to reject AVX-512 compilation
+        run: |
+          cat > /tmp/cc-no-avx512.sh << 'SCRIPT'
+          #!/bin/bash
+          # lance-linalg build.rs 无条件编译 AVX-512 dist_table 内核（C 代码），
+          # 但 dist_table.c 用 #ifdef __AVX512BW__ 守卫，过滤标志后函数体不会生成，
+          # try_compile 仍返回 Ok → cfg 被设置 → Rust 引用不存在的符号 → 链接失败。
+          # 解决方案：检测到 AVX-512 标志时直接让编译失败，
+          # 这样 try_compile 返回 Err，cfg 不设置，Rust 代码走 fallback。
+          for arg in "$@"; do
+            case "$arg" in
+              -march=sapphirerapids|-mavx512fp16|-mavx512bw|-mavx512f|-mavx512dq|-mavx512cd|-mavx512vl)
+                echo "cc-wrapper: rejecting AVX-512 flag: $arg" >&2
+                exit 1
+                ;;
+            esac
+          done
+          exec cc "$@"
+          SCRIPT
+          chmod +x /tmp/cc-no-avx512.sh
+
       - name: Build
         run: cargo build --release --target x86_64-apple-darwin
         env:
           # 交叉编译时禁用 AVX-512，避免 lance-linalg 链接失败
           RUSTFLAGS: "-C target-feature=-avx512f,-avx512bw,-avx512cd,-avx512dq,-avx512vl"
+          # 用 cc wrapper 过滤 AVX-512 C 编译标志
+          CC_x86_64_apple_darwin: /tmp/cc-no-avx512.sh
 
       - name: Create .app bundle
         run: bash scripts/macos_bundle.sh
@@ -139,10 +162,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "25.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        run: choco install protobuf --yes
 
       - name: Build
         run: cargo build --release
