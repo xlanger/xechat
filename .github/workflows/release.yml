@@ -31,6 +31,8 @@ jobs:
 
       - name: Build
         run: cargo build --release --target aarch64-apple-darwin
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
 
       - name: Create .app bundle
         run: bash scripts/macos_bundle.sh
@@ -76,6 +78,8 @@ jobs:
 
       - name: Build
         run: cargo zigbuild --release --target x86_64-apple-darwin
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
 
       - name: Create .app bundle
         run: bash scripts/macos_bundle.sh
@@ -221,6 +225,6 @@ jobs:
 
             ### 系统要求
 
-            - macOS 10.15+
+            - macOS 12+
             - Linux: libwebkit2gtk-4.1
             - Windows 10+ with WebView2 Runtime
