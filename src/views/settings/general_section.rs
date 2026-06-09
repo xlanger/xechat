@@ -63,9 +63,9 @@ pub fn GeneralSection() -> Element {
     let mut ollama_embed_models: Signal<Vec<String>> = use_signal(Vec::new);
 
     // 嵌入模型下载状态
-    let mut model_ready: Signal<bool> = use_signal(|| crate::services::model_downloader::is_model_ready());
-    let mut model_downloading: Signal<bool> = use_signal(|| false);
-    let mut model_progress: Signal<String> = use_signal(String::new);
+    let model_ready: Signal<bool> = use_signal(|| crate::services::model_downloader::is_model_ready());
+    let model_downloading: Signal<bool> = use_signal(|| false);
+    let model_progress: Signal<String> = use_signal(String::new);
     let model_error: Signal<String> = use_signal(String::new);
 
     let general_text = t!("settings.general").to_string();
@@ -359,7 +359,7 @@ pub fn GeneralSection() -> Element {
                                     onclick: {
                                         let mut model_downloading = model_downloading;
                                         let mut model_progress = model_progress;
-                                        let mut model_ready = model_ready;
+                                        let model_ready = model_ready;
                                         let mut model_error = model_error;
                                         move |_| {
                                             model_downloading.set(true);
