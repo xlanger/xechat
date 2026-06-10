@@ -45,7 +45,7 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" << 'PLIST'
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.15</string>
+    <string>12.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
