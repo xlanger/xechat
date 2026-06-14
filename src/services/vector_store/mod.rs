@@ -13,4 +13,7 @@ pub trait VectorStore: Send + Sync {
 
     /// 按 assistant 消息 ID 删除关联的轮次分块
     async fn delete_by_assistant_message(&self, msg_id: &str) -> anyhow::Result<()>;
+
+    /// 返回 `self` 的 `Any` 引用，用于 downcast 到具体类型。
+    fn as_any(&self) -> &dyn std::any::Any;
 }

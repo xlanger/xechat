@@ -15,6 +15,16 @@ pub mod app;
 pub mod search;
 
 pub use conversation::ConversationStore;
+pub use conversation::StreamAction;
+pub use conversation::StreamLoopAction;
+pub use conversation::compute_full_window_range;
+pub use conversation::compute_anchored_window_range;
+pub use conversation::can_load_older;
+pub use conversation::can_load_newer;
+pub use conversation::compute_older_window;
+pub use conversation::compute_newer_window_end;
+pub use conversation::sync_ollama_host_to_provider;
+pub use conversation::should_enable_ollama;
 pub use ui::{UIStore, Toast, ToastKind};
 pub use app::AppStore;
 pub use search::SearchStore;

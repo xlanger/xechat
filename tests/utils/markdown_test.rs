@@ -522,3 +522,151 @@ fn test_preprocess_paren_inline_multiline() {
     eprintln!("Output: {}", &html[..html.len().min(500)]);
     assert!(html.contains("katex"), "Expected katex for multiline \\(...\\)");
 }
+
+use xechat::utils::markdown::{scan_inline_closing, is_renderable_latex, scan_display_closing, has_latex_features};
+
+// ── scan_inline_closing ─────────────────────────────────────────
+
+#[test]
+fn test_scan_inline_closing_simple() {
+    let chars: Vec<char> = "$x+y$".chars().collect();
+    let (pos, found) = scan_inline_closing(&chars, 0);
+    assert!(found);
+    assert_eq!(pos, 4, "Closing $ should be at index 4");
+}
+
+#[test]
+fn test_scan_inline_closing_no_close() {
+    let chars: Vec<char> = "$x+y".chars().collect();
+    let (pos, found) = scan_inline_closing(&chars, 0);
+    assert!(!found);
+    assert_eq!(pos, 4, "Should scan to end");
+}
+
+#[test]
+fn test_scan_inline_closing_with_braces() {
+    let chars: Vec<char> = "$\\frac{1}{2}$".chars().collect();
+    let (_pos, found) = scan_inline_closing(&chars, 0);
+    assert!(found, "Should find closing $ after balanced braces");
+}
+
+#[test]
+fn test_scan_inline_closing_escaped_paren_stops() {
+    let chars: Vec<char> = "$x\\)".chars().collect();
+    let (_pos, found) = scan_inline_closing(&chars, 0);
+    assert!(!found, "Should stop at escaped \\)");
+}
+
+#[test]
+fn test_scan_inline_closing_escaped_bracket_stops() {
+    let chars: Vec<char> = "$x\\]".chars().collect();
+    let (_pos, found) = scan_inline_closing(&chars, 0);
+    assert!(!found, "Should stop at escaped \\]");
+}
+
+#[test]
+fn test_scan_inline_closing_dollar_inside_braces() {
+    let chars: Vec<char> = "$\\$5$".chars().collect();
+    let (_pos, found) = scan_inline_closing(&chars, 0);
+    // $ inside braces should be skipped
+    assert!(found, "Should find closing $ after braces");
+}
+
+#[test]
+fn test_scan_inline_closing_empty_content() {
+    let chars: Vec<char> = "$$".chars().collect();
+    let (pos, found) = scan_inline_closing(&chars, 0);
+    assert!(found, "Empty inline math should close immediately");
+    assert_eq!(pos, 1);
+}
+
+// ── is_renderable_latex ─────────────────────────────────────────
+
+#[test]
+fn test_is_renderable_latex_normal() {
+    assert!(is_renderable_latex("x^2 + y^2"));
+}
+
+#[test]
+fn test_is_renderable_latex_empty() {
+    assert!(!is_renderable_latex(""));
+}
+
+#[test]
+fn test_is_renderable_latex_whitespace_only() {
+    assert!(!is_renderable_latex("   "));
+}
+
+#[test]
+fn test_is_renderable_latex_contains_html_tag() {
+    assert!(!is_renderable_latex("x <b>bold</b>"));
+}
+
+#[test]
+fn test_is_renderable_latex_contains_angle_brackets() {
+    assert!(!is_renderable_latex("a < b"));
+    assert!(!is_renderable_latex("a > b"));
+}
+
+#[test]
+fn test_is_renderable_latex_trimmed() {
+    assert!(is_renderable_latex("  x^2  "), "Should trim before checking");
+}
+
+// ── scan_display_closing ────────────────────────────────────────
+
+#[test]
+fn test_scan_display_closing_found() {
+    let chars: Vec<char> = "$$x^2$$".chars().collect();
+    let (pos, found) = scan_display_closing(&chars, 0);
+    assert!(found, "Should find closing $$");
+    assert_eq!(pos, 5, "Closing $$ should start at index 5");
+}
+
+#[test]
+fn test_scan_display_closing_not_found() {
+    let chars: Vec<char> = "$$x^2".chars().collect();
+    let (_pos, found) = scan_display_closing(&chars, 0);
+    assert!(!found, "Should not find closing $$");
+}
+
+#[test]
+fn test_scan_display_closing_multiline() {
+    let chars: Vec<char> = "$$x^2\n+ y^2$$".chars().collect();
+    let (_pos, found) = scan_display_closing(&chars, 0);
+    assert!(found, "Should find closing $$ across lines");
+}
+
+#[test]
+fn test_scan_display_closing_too_short() {
+    let chars: Vec<char> = "$$".chars().collect();
+    let (_pos, found) = scan_display_closing(&chars, 0);
+    assert!(!found, "Too short to have closing $$");
+}
+
+// ── has_latex_features ──────────────────────────────────────────
+
+#[test]
+fn test_has_latex_features_backslash() {
+    assert!(has_latex_features("\\frac{1}{2}"));
+}
+
+#[test]
+fn test_has_latex_features_underscore() {
+    assert!(has_latex_features("x_1"));
+}
+
+#[test]
+fn test_has_latex_features_caret() {
+    assert!(has_latex_features("x^2"));
+}
+
+#[test]
+fn test_has_latex_features_none() {
+    assert!(!has_latex_features("plain text"));
+}
+
+#[test]
+fn test_has_latex_features_empty() {
+    assert!(!has_latex_features(""));
+}

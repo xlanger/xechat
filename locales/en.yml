@@ -1,26 +1,26 @@
 app:
   title: XEChat
-  slogan: X empowered by chat
+  slogan: "X empowered by chat"
 
 common:
-  please-select: — Please Select —
+  please-select: "— Please Select —"
 
 sidebar:
   new-chat: New Chat
   config: Settings
 
 welcome:
-  title: Welcome to XEChat
-  subtitle: X empowered by chat
-  start-chat: Start New Chat
+  title: "Welcome to XEChat"
+  subtitle: "X empowered by chat"
+  start-chat: "Start New Chat"
 
 chat:
-  input-placeholder: Ask anything...
+  input-placeholder: "Ask anything..."
   header-model: Model
-  status-sending: Sending...
+  status-sending: "Sending..."
   status-sent: Sent
   status-failed: Failed
-  status-truncated: Generation stopped
+  status-truncated: "Generation stopped"
   reasoning: Reasoning
 
 search:
@@ -29,81 +29,99 @@ search:
   fulltext: FullText
   semantic: Semantic
   hybrid: Hybrid
-  fulltextmatch: Full Text Match
-  semanticmatch: Semantic Match
-  hybridmatch: Hybrid Match
+  fulltextmatch: "Full Text Match"
+  semanticmatch: "Semantic Match"
+  hybridmatch: "Hybrid Match"
   semantic-related: "%{percent}% Semantic Related"
   count-messages: "%{count} messages"
   count-total-messages: "%{count} / %{total} messages"
   count-conversations: "%{count} conversations"
-  recent-conversations: Recent Conversations
-  search-placeholder: Search history conversations...
-  no-results: No results found
+  recent-conversations: "Recent Conversations"
+  search-placeholder: "Search history conversations..."
+  no-results: "No results found"
 
 preview:
-  loading: Loading...
+  loading: "Loading..."
   scroll-up: "↑ Scroll up to load more"
   scroll-down: "↓ Scroll down to load more"
-  empty: Select a search result to preview the conversation
+  empty: "Select a search result to preview the conversation"
 
 conversation:
-  default-title: New Conversation
+  default-title: "New Conversation"
 
 menu:
   rename: Rename
   delete: Delete
 
 modal:
-  rename-title: Rename Chat
-  rename-placeholder: Enter chat name...
-  delete-title: Delete Chat
-  delete-message: Are you sure you want to delete this chat? This action cannot be undone.
+  rename-title: "Rename Chat"
+  rename-placeholder: "Enter chat name..."
+  delete-title: "Delete Chat"
+  delete-message: "Are you sure you want to delete this chat? This action cannot be undone."
   cancel: Cancel
   confirm: Confirm
   save: Save
   delete-confirm: Delete
+  rebuild-title: "Rebuild Vectors"
+  rebuild-message: "This will re-encode all conversation turns with the current embedding model. Existing vectors will be replaced. The process may take a while depending on the number of conversations. Continue?"
+  rebuild-confirm: Rebuild
 
 config:
   title: Settings
-  provider: Model Provider
+  provider: "Model Provider"
   model: Model
-  path: Config file
-  tip: Edit config.toml to add new providers or modify API keys
+  path: "Config file"
+  tip: "Edit config.toml to add new providers or modify API keys"
 
 toast:
-  config-saved: Configuration saved successfully
-  conversation-created: New chat created
-  conversation-renamed: Chat renamed
-  conversation-deleted: Chat deleted
+  config-saved: "Configuration saved successfully"
+  conversation-created: "New chat created"
+  conversation-renamed: "Chat renamed"
+  conversation-deleted: "Chat deleted"
   error: Error
+  turns-rebuilt: "Embed model changed, turn vectors rebuilt"
+
+rebuild:
+  progress: "Rebuilding turn vectors %{current}/%{total}..."
+
+status:
+  network-ok: "Network OK"
+  network-unavailable: "No Network"
+  embed-model-not-ready: "Model Not Ready"
+  network-lost: "Network connection lost"
+  network-restored: "Network connection restored"
+  ollama-connected: "Ollama service connected"
+  ollama-disconnected: "Ollama service disconnected"
+  embedder-ready: "Embedding model ready"
+  embedder-unavailable: "Embedding model unavailable"
 
 error:
-  network: Network error
+  network: "Network error"
   auth:
-    invalid-key: Invalid API key format
-    unauthorized: Authentication failed (401). Please check your API Key in config
+    invalid-key: "Invalid API key format"
+    unauthorized: "Authentication failed (401). Please check your API Key in config"
   api:
-    http-error: API request failed
+    http-error: "API request failed"
   stream:
-    read-error: Stream read error
+    read-error: "Stream read error"
   config:
-    failed: Config operation failed
+    failed: "Config operation failed"
   io:
-    failed: File operation failed
+    failed: "File operation failed"
   serialization:
-    parse-error: Parsing error
-  invalid-input: Invalid input
+    parse-error: "Parsing error"
+  invalid-input: "Invalid input"
   unsupported: Unsupported
 
 settings:
   title: Settings
   close: Close
   save: Save
-  saved: Configuration saved
-  save-failed: Failed to save configuration
+  saved: "Configuration saved"
+  save-failed: "Failed to save configuration"
   general: General
   conversation: Conversation
-  models: Model Providers
+  models: "Model Providers"
   theme: Theme
   language: Language
   theme-system: System
@@ -114,54 +132,74 @@ settings:
   lang-en: English
   timezone: Timezone
   tz-system: System
-  current-embed-model: Embed Model
-  embed-provider: Embed Provider
-  chat-provider: Chat Provider
-  chat-model: Chat Model
-  no-models: No models, please add one
-  provider-name: Provider Name
-  api-key: API Key
-  api-key-placeholder: Enter API Key, leave empty to read from env var {env}
-  base-url: Base URL
-  timeout: Timeout (seconds)
-  model-params: Model Parameters
-  max-tokens: Max Output Tokens
-  temperature: Temperature (0-2)
-  top-p: Top P (0-1)
-  frequency-penalty: Freq Penalty
-  presence-penalty: Pres Penalty
-  context-window: Context Window
-  stop-sequences: Stop Sequences
+  current-embed-model: "Embed Model"
+  embed-provider: "Embed Provider"
+  chat-provider: "Chat Provider"
+  chat-model: "Chat Model"
+  no-models: "No models, please add one"
+  provider-name: "Provider Name"
+  api-key: "API Key"
+  api-key-placeholder: "Enter API Key, leave empty to read from env var {env}"
+  base-url: "Base URL"
+  timeout: "Timeout (seconds)"
+  model-params: "Model Parameters"
+  max-tokens: "Max Output Tokens"
+  temperature: "Temperature (0-2)"
+  top-p: "Top P (0-1)"
+  frequency-penalty: "Freq Penalty"
+  presence-penalty: "Pres Penalty"
+  context-window: "Context Window"
+  stop-sequences: "Stop Sequences"
   stop-sequences-placeholder: "Comma-separated, e.g.: \\n,###"
-  config-path: Config file path
-  config-tip: Changes will be saved automatically
-  memory: Memory & Search
-  memory-max-results: Max Memory Results
-  memory-ollama-host: Ollama Host
-  memory-ollama-host-placeholder: http://localhost:11434
-  memory-ollama-model: Ollama Embed Model (Optional)
-  memory-ollama-model-placeholder: e.g. BAAI/bge-base-en-v1.5
-  memory-ollama-chat-model: Ollama Chat Model (Optional)
-  memory-ollama-chat-model-placeholder: e.g. qwen3:7b
-  add-model: Add Model
-  add-model-placeholder: Enter model name
-  openai-compatible: OpenAI Compatible
-  delete-model: Delete Model
-  ollama: Ollama Extension
+  config-path: "Config file path"
+  config-tip: "Changes will be saved automatically"
+  memory: "Memory & Search"
+  memory-max-results: "Max Memory Results"
+  memory-ollama-host: "Ollama Host"
+  memory-ollama-host-placeholder: "http://localhost:11434"
+  memory-ollama-model: "Ollama Embed Model (Optional)"
+  memory-ollama-model-placeholder: "e.g. BAAI/bge-base-en-v1.5"
+  memory-ollama-chat-model: "Ollama Chat Model (Optional)"
+  memory-ollama-chat-model-placeholder: "e.g. qwen3:7b"
+  add-model: "Add Model"
+  add-model-placeholder: "Enter model name"
+  openai-compatible: "OpenAI Compatible"
+  delete-model: "Delete Model"
+  ollama: "Ollama Extension"
   ollama-host: Host
-  ollama-host-placeholder: http://localhost:11434
-  ollama-embed-provider: Embed Model
-  ollama-embed-provider-default: E5 Base (Built-in)
-  ollama-embed-provider-ollama: Ollama Extension
-  ollama-embed-model: Embed Model
-  ollama-embed-model-placeholder: e.g. BAAI/bge-base-en-v1.5
-  ollama-chat-provider: Chat Model
-  ollama-chat-model: Chat Model
-  ollama-chat-model-placeholder: e.g. qwen3:7b
-  embed-model-status: Embed Model Status
+  ollama-host-placeholder: "http://localhost:11434"
+  ollama-embed-provider: "Embed Model"
+  ollama-embed-provider-default: "Built-in (default)"
+  ollama-embed-provider-ollama: "Ollama Extension"
+  embed-provider-hint: "Built-in model needs no setup; Ollama supports longer context. Switching providers rebuilds vectors."
+  embed-model-hint: "The model used to convert messages into searchable vectors for semantic search."
+  chat-provider-hint: "The AI service provider for conversation (e.g., DeepSeek, OpenAI, or local Ollama)."
+  chat-model-hint: "The specific AI model used to generate responses. Options depend on the selected provider."
+  embed-status-hint: "Shows download/ready status of the embedding model and lets you rebuild search vectors."
+  rebuild-vectors-hint: "Re-encode all past conversations with the current model to update semantic search results."
+  memory-max-results-hint: "Maximum number of past conversations retrieved as context for semantic search (1-20)."
+  base-url-hint: "API endpoint URL of this provider. Leave empty to use the default address."
+  timeout-hint: "Request timeout in seconds. Increase if responses are slow or models are large."
+  api-key-hint: "Authentication key for this provider. Required by most cloud services; leave blank for local Ollama."
+  max-tokens-hint: "Maximum number of tokens in a single response. Higher values allow longer replies but cost more."
+  temperature-hint: "Controls creativity: lower = more focused, higher = more random. Try 0-2, recommended around 0.7."
+  top-p-hint: "Nucleus sampling: only consider tokens whose cumulative probability falls within this threshold (0-1). Works with temperature."
+  frequency-penalty-hint: "Reduces repetition of words that already appeared in the conversation. Range 0-2, 0 means off."
+  presence-penalty-hint: "Encourages talking about new topics instead of repeating previous ones. Range 0-2, 0 means off."
+  context-window-hint: "Maximum context length this model supports. Larger windows retain more conversation history."
+  stop-sequences-hint: 'Comma-separated phrases that stop generation when encountered (e.g., "END", "###").'
+  ollama-host-hint: "Local Ollama service address. Default is http://localhost:11434. Make sure Ollama is running."
+  ollama-embed-model: "Embed Model"
+  ollama-embed-model-placeholder: "e.g. qwen3-embedding:4b"
+  ollama-chat-provider: "Chat Model"
+  ollama-chat-model: "Chat Model"
+  ollama-chat-model-placeholder: "e.g. qwen3:7b"
+  embed-model-status: "Embed Model Status"
   embed-model-ready: Ready
-  embed-model-not-found: Not Downloaded
-  embed-model-downloading: Downloading... %{percent}%
-  embed-model-download: Download Model
-  embed-model-download-failed: Download Failed
-  embed-model-size: ~430MB
+  embed-model-not-found: "Not Downloaded"
+  embed-model-downloading: "Downloading... %{percent}%"
+  embed-model-download: "Download Model"
+  embed-model-download-failed: "Download Failed"
+  embed-model-size: "~530MB"
+  rebuild_vectors: "Rebuild Vectors"
+  rebuild_vectors_hint: "Re-encode all conversation turns with the current embedding model"

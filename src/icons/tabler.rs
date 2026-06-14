@@ -236,6 +236,24 @@ pub const User: IconData = IconData {
 };
 
 #[allow(non_upper_case_globals)]
+pub const Wifi: IconData = IconData {
+    name: "tabler:wifi",
+    body: r#"<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 18l.01 0"/><path d="M9.172 15.752a4 4 0 0 1 5.656 0"/><path d="M5.343 12.009a8 8 0 0 1 13.314 0"/><path d="M3.22 9.916a11.95 11.95 0 0 1 17.56 0"/></g>"#,
+    view_box: "0 0 24 24",
+    width: "24",
+    height: "24",
+};
+
+#[allow(non_upper_case_globals)]
+pub const WifiOff: IconData = IconData {
+    name: "tabler:wifi-off",
+    body: r#"<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 18l.01 0"/><path d="M9.172 15.752a4 4 0 0 1 5.656 0"/><path d="M5.343 12.009a8 8 0 0 1 3.157-2.062"/><path d="M3.22 9.916a11.95 11.95 0 0 1 12.024-2.324"/><path d="M3 3l18 18"/></g>"#,
+    view_box: "0 0 24 24",
+    width: "24",
+    height: "24",
+};
+
+#[allow(non_upper_case_globals)]
 pub const X: IconData = IconData {
     name: "tabler:x",
     body: r#"<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12"/>"#,
@@ -263,9 +281,27 @@ pub const ZoomOut: IconData = IconData {
 };
 
 #[allow(non_upper_case_globals)]
+pub const Download: IconData = IconData {
+    name: "tabler:download",
+    body: r#"<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M7 11l5 5l5-5"/><path d="M12 4v12"/></g>"#,
+    view_box: "0 0 24 24",
+    width: "24",
+    height: "24",
+};
+
+#[allow(non_upper_case_globals)]
 pub const Loader: IconData = IconData {
     name: "tabler:loader",
     body: r#"<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V3m4.25 2.75L18.4 4.6M18 12h3m-2.75 4.25l1.85 1.15M12 18v3m-4.25-2.75L5.6 19.4M6 12H3m2.75-4.25L3.9 6.6"/>"#,
+    view_box: "0 0 24 24",
+    width: "24",
+    height: "24",
+};
+
+#[allow(non_upper_case_globals)]
+pub const InfoCircle: IconData = IconData {
+    name: "tabler:info-circle",
+    body: r#"<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0m0-5v.01M11 15h2m-1-4h.01"/>"#,
     view_box: "0 0 24 24",
     width: "24",
     height: "24",

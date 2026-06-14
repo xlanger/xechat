@@ -1,33 +1,16 @@
-//! 智能编码层：E5 默认 + Ollama 可选增强。
+//! 语义分块与向量工具函数。
 //!
-//! 短文本（<400 字符）使用 E5 直接处理，
-//! 长文本优先 Ollama（如果可用且有长上下文模型），
-//! Ollama 不可用时回退到 E5 语义边界分块编码。
-
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use once_cell::sync::OnceCell;
-
-use super::{Embedder, e5::E5Embedder};
-
-/// 语义边界分块参数
-///
-/// E5-base GGUF Q8_0 的 token 预算：
-/// - usable_context = 512 tokens
-/// - overhead（BOS/EOS/特殊 token/前缀）≈ 258 tokens
-/// - effective_max = 254 tokens
-/// - 中文约 1.5-2 tokens/字符 → 254 tokens ≈ 127-170 字符
-/// - 轮次格式 "用户：xxx\n助手：yyy" 角色标签约占 10-15 tokens
-/// - 实际可用 ≈ 120-150 字符
-///
-/// 因此分块目标设为 150 字符，最大 200 字符，重叠 30 字符。
-const CHUNK_TARGET_CHARS: usize = 150;
-const CHUNK_OVERLAP_CHARS: usize = 30;
-const CHUNK_MAX_CHARS: usize = 200;
+//! 提供 [`ChunkParams`] 动态分块参数计算、[`semantic_chunk`] 语义边界切分、
+//! [`normalize_vector`] L2 归一化等工具函数，供嵌入器和记忆管线使用。
 
 /// 角色标签行前缀，切分时不可在这些行中间截断。
 const ROLE_LABELS: &[&str] = &["用户：", "助手："];
+
+/// 模型 token 开销（BOS/EOS/特殊 token/前缀等）。
+const TOKEN_OVERHEAD: usize = 258;
+
+/// 中文平均 token/字符比。
+const AVG_TOKENS_PER_CHAR: f64 = 1.75;
 
 /// 分块跨度
 #[derive(Debug, Clone, PartialEq)]
@@ -37,102 +20,64 @@ pub struct ChunkSpan {
     pub end: usize,
 }
 
-/// 智能编码管理器：E5 打底，Ollama 可选增强长文本。
-pub struct EmbedManager {
-    e5: Arc<E5Embedder>,
-    ollama: OnceCell<Arc<dyn Embedder>>,
+/// 动态分块参数，根据 embedder 的 context_window 计算。
+#[derive(Debug, Clone, Copy)]
+pub struct ChunkParams {
+    /// 目标分块字符数
+    pub target_chars: usize,
+    /// 最大分块字符数
+    pub max_chars: usize,
+    /// 重叠字符数
+    pub overlap_chars: usize,
 }
 
-impl EmbedManager {
-    /// 创建 EmbedManager，E5 作为默认嵌入器。
-    pub fn new(e5: Arc<E5Embedder>) -> Self {
+impl ChunkParams {
+    /// 根据 embedder 的 context_window 动态计算分块参数。
+    ///
+    /// 计算公式：
+    /// - effective_tokens = context_window - overhead
+    /// - target_chars = effective_tokens * 0.6 / avg_tokens_per_char
+    /// - max_chars = effective_tokens * 0.8 / avg_tokens_per_char
+    /// - overlap_chars = target_chars * 0.2
+    pub fn from_context_window(context_window: usize) -> Self {
+        let effective_tokens = context_window.saturating_sub(TOKEN_OVERHEAD);
+        let target_chars = (effective_tokens as f64 * 0.6 / AVG_TOKENS_PER_CHAR) as usize;
+        let max_chars = (effective_tokens as f64 * 0.8 / AVG_TOKENS_PER_CHAR) as usize;
+        let overlap_chars = (target_chars as f64 * 0.2) as usize;
         Self {
-            e5,
-            ollama: OnceCell::new(),
+            target_chars: target_chars.max(50),
+            max_chars: max_chars.max(target_chars + 20),
+            overlap_chars: overlap_chars.max(10),
         }
-    }
-
-    /// 激活 Ollama 扩展（探测成功后调用）。
-    pub fn enable_ollama(&self, embedder: Arc<dyn Embedder>) -> anyhow::Result<()> {
-        self.ollama
-            .set(embedder)
-            .map_err(|_| anyhow::anyhow!("Ollama already enabled"))
-    }
-
-    /// E5 长文本分块编码：语义边界切分 → 逐块编码 → 返回所有分块向量。
-    pub async fn encode_long_chunks(&self, text: &str) -> anyhow::Result<Vec<(ChunkSpan, Vec<f32>)>> {
-        let spans = semantic_chunk(text);
-        let mut results = Vec::with_capacity(spans.len());
-        for span in &spans {
-            let embedding = self.e5.encode_passage(&span.text).await?;
-            results.push((span.clone(), embedding));
-        }
-        Ok(results)
     }
 }
 
-#[async_trait]
-impl Embedder for EmbedManager {
-    async fn encode(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
-        let mut results = Vec::with_capacity(texts.len());
-        for text in texts {
-            results.push(self.encode_one(text).await?);
-        }
-        Ok(results)
+impl Default for ChunkParams {
+    fn default() -> Self {
+        // Qwen3-Embedding (32K tokens) 的默认参数
+        Self::from_context_window(32768)
     }
+}
 
-    async fn encode_one(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        self.encode_query(text).await
-    }
-
-    async fn encode_query(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let char_count = text.chars().count();
-        if char_count <= CHUNK_TARGET_CHARS {
-            return self.e5.encode_query(text).await;
-        }
-        if let Some(ollama) = self.ollama.get() {
-            return ollama.encode_query(text).await;
-        }
-        let chunks = self.encode_long_chunks(text).await?;
-        Ok(aggregate_mean(
-            &chunks.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
-        ))
-    }
-
-    async fn encode_passage(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let char_count = text.chars().count();
-        if char_count <= CHUNK_TARGET_CHARS {
-            return self.e5.encode_passage(text).await;
-        }
-        if let Some(ollama) = self.ollama.get() {
-            return ollama.encode_passage(text).await;
-        }
-        let chunks = self.encode_long_chunks(text).await?;
-        Ok(aggregate_mean(
-            &chunks.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
-        ))
-    }
-
-    fn dimension(&self) -> usize {
-        self.e5.dimension()
-    }
-
-    fn name(&self) -> &str {
-        if self.ollama.get().is_some() {
-            "embed-manager+ollama"
-        } else {
-            "embed-manager+e5"
-        }
+/// 计算下一个分块的起始位置（含重叠回退）。
+///
+/// 从当前块的结束位置回退 `overlap` 个字符，确保分块间有上下文重叠。
+#[inline]
+pub fn compute_next_chunk_start(text: &str, end: usize, overlap: usize) -> usize {
+    if end >= overlap {
+        char_offset_back(&text[..end], overlap)
+    } else {
+        0
     }
 }
 
 /// 按语义边界切分文本。
 ///
 /// 优先级：角色标签边界 > 段落边界 > 句子边界 > 字符滑动窗口。
-/// 每块目标 150 字符，最大 200 字符，重叠 30 字符。
+/// 分块参数由 `ChunkParams` 动态指定。
 /// 不允许在角色标签行（"用户："、"助手："）中间切分。
-pub fn semantic_chunk(text: &str) -> Vec<ChunkSpan> {
-    if text.chars().count() <= CHUNK_TARGET_CHARS {
+pub fn semantic_chunk(text: &str, params: ChunkParams) -> Vec<ChunkSpan> {
+    if text.chars().count() <= params.target_chars {
         return vec![ChunkSpan { text: text.to_string(), start: 0, end: text.len() }];
     }
 
@@ -141,7 +86,7 @@ pub fn semantic_chunk(text: &str) -> Vec<ChunkSpan> {
 
     while pos < text.len() {
         let remaining = &text[pos..];
-        let target_end = pos + char_offset(remaining, CHUNK_TARGET_CHARS);
+        let target_end = pos + char_offset(remaining, params.target_chars);
 
         if target_end >= text.len() {
             chunks.push(ChunkSpan { text: text[pos..].to_string(), start: pos, end: text.len() });
@@ -149,18 +94,13 @@ pub fn semantic_chunk(text: &str) -> Vec<ChunkSpan> {
         }
 
         // 在目标位置附近找语义边界
-        let boundary = find_boundary(&text[pos..], CHUNK_TARGET_CHARS, CHUNK_MAX_CHARS);
+        let boundary = find_boundary(&text[pos..], params.target_chars, params.max_chars);
 
         let end = pos + boundary;
         chunks.push(ChunkSpan { text: text[pos..end].to_string(), start: pos, end });
 
         // 下一块起始位置：回退 overlap
-        let overlap_start = if end >= CHUNK_OVERLAP_CHARS {
-            char_offset_back(&text[..end], CHUNK_OVERLAP_CHARS)
-        } else {
-            0
-        };
-        pos = overlap_start;
+        pos = compute_next_chunk_start(text, end, params.overlap_chars);
     }
 
     chunks
@@ -170,6 +110,32 @@ pub fn semantic_chunk(text: &str) -> Vec<ChunkSpan> {
 fn find_boundary(text: &str, target: usize, max: usize) -> usize {
     let candidate = find_boundary_core(text, target, max);
     protect_role_labels(text, candidate)
+}
+
+/// 在搜索范围内查找最佳句子边界位置。
+pub fn find_sentence_boundary(text: &str, search_start: usize, max_off: usize) -> Option<usize> {
+    let sentence_endings = ["\u{3002}", "\u{FF01}", "\u{FF1F}", ".", "!", "?"];
+    let mut best = 0;
+    for ending in &sentence_endings {
+        if let Some(pos) = find_last_occurrence(text, ending, search_start, max_off) {
+            let candidate = pos + ending.len();
+            if candidate > best {
+                best = candidate;
+            }
+        }
+    }
+    if best > 0 { Some(best) } else { None }
+}
+
+/// 在搜索范围内查找角色标签行之前的换行位置。
+pub fn find_role_label_boundary(text: &str, search_start: usize, max_off: usize) -> Option<usize> {
+    let pos = find_last_occurrence(text, "\n", search_start, max_off)?;
+    let after_newline = &text[pos + 1..];
+    if ROLE_LABELS.iter().any(|label| after_newline.starts_with(label)) {
+        Some(pos + 1)
+    } else {
+        None
+    }
 }
 
 /// 核心边界查找逻辑（不含角色标签保护）。
@@ -187,49 +153,41 @@ fn find_boundary_core(text: &str, target: usize, max: usize) -> usize {
     }
 
     // 2. 找句子边界（。！？.!?）——优先语义切割
-    let sentence_endings = ["\u{3002}", "\u{FF01}", "\u{FF1F}", ".", "!", "?"];
-    let mut best = 0;
-    for ending in &sentence_endings {
-        if let Some(pos) = find_last_occurrence(text, ending, search_start, max_off) {
-            let candidate = pos + ending.len();
-            if candidate > best {
-                best = candidate;
-            }
-        }
-    }
-    if best > 0 {
+    if let Some(best) = find_sentence_boundary(text, search_start, max_off) {
         return best;
     }
 
     // 3. 找换行边界（角色标签行之间的换行）
-    if let Some(pos) = find_last_occurrence(text, "\n", search_start, max_off) {
-        let after_newline = &text[pos + 1..];
-        if ROLE_LABELS.iter().any(|label| after_newline.starts_with(label)) {
-            return pos + 1;
-        }
+    if let Some(pos) = find_role_label_boundary(text, search_start, max_off) {
+        return pos;
     }
 
     // 4. 回退到目标长度硬切
     target_off
 }
 
+/// 检查切分点是否落在某个标签内部，若是则返回该标签前的换行位置。
+pub fn find_label_overlap_boundary(text: &str, cut_point: usize, label: &str) -> Option<usize> {
+    let search_start = floor_char_boundary(text, cut_point.saturating_sub(label.len()));
+    let search_end = ceil_char_boundary(text, (cut_point + label.len()).min(text.len()));
+    if search_end > text.len() {
+        return None;
+    }
+    let window = &text[search_start..search_end];
+    let relative_pos = window.find(label)?;
+    let label_start = search_start + relative_pos;
+    if cut_point > label_start && cut_point < label_start + label.len() {
+        Some(text[..label_start].rfind('\n').map(|p| p + 1).unwrap_or(0))
+    } else {
+        None
+    }
+}
+
 /// 角色标签保护：确保切分点不在角色标签行中间。
 fn protect_role_labels(text: &str, cut_point: usize) -> usize {
     for label in ROLE_LABELS {
-        let search_start = floor_char_boundary(text, cut_point.saturating_sub(label.len()));
-        let search_end = ceil_char_boundary(text, (cut_point + label.len()).min(text.len()));
-        if search_end > text.len() {
-            continue;
-        }
-        let window = &text[search_start..search_end];
-        if let Some(relative_pos) = window.find(label) {
-            let label_start = search_start + relative_pos;
-            if cut_point > label_start && cut_point < label_start + label.len() {
-                if let Some(prev_newline) = text[..label_start].rfind('\n') {
-                    return prev_newline + 1;
-                }
-                return 0;
-            }
+        if let Some(boundary) = find_label_overlap_boundary(text, cut_point, label) {
+            return boundary;
         }
     }
     cut_point
@@ -283,24 +241,13 @@ fn char_offset_back(text: &str, n: usize) -> usize {
         .unwrap_or(0)
 }
 
-fn aggregate_mean(embeddings: &[Vec<f32>]) -> Vec<f32> {
-    if embeddings.is_empty() {
-        return Vec::new();
-    }
-    let dim = embeddings[0].len();
-    let mut sum = vec![0.0f32; dim];
-    for emb in embeddings {
-        for (i, &val) in emb.iter().enumerate() {
-            sum[i] += val;
-        }
-    }
-    let n = embeddings.len() as f32;
-    let mut result: Vec<f32> = sum.iter().map(|&s| s / n).collect();
-    let norm = result.iter().map(|v| v * v).sum::<f32>().sqrt();
+/// 对向量进行 L2 归一化（原地修改）。
+pub fn normalize_vector(vec: &mut [f32]) {
+    let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
     if norm > 0.0 {
-        for v in result.iter_mut() {
+        for v in vec.iter_mut() {
             *v /= norm;
         }
     }
-    result
 }
+

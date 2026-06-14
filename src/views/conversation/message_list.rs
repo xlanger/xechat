@@ -18,6 +18,38 @@ const THRESHOLD_MAX: f64 = 200.0;
 /// 触发阈值占容器高度的比例
 const THRESHOLD_RATIO: f64 = 0.2;
 
+/// 计算动态滚动阈值，限制在 [THRESHOLD_MIN, THRESHOLD_MAX] 范围内。
+#[inline]
+pub fn compute_scroll_threshold(client_height: f64) -> f64 {
+    (client_height * THRESHOLD_RATIO).clamp(THRESHOLD_MIN, THRESHOLD_MAX)
+}
+
+/// 判断是否应加载更早的消息。
+#[inline]
+pub fn should_load_older(can_load: bool, scroll_top: f64, threshold: f64) -> bool {
+    can_load && scroll_top < threshold
+}
+
+/// 判断是否应加载更晚的消息。
+#[inline]
+pub fn should_load_newer(can_load: bool, max_scroll_top: f64, scroll_top: f64, threshold: f64) -> bool {
+    can_load && (max_scroll_top - scroll_top) < threshold
+}
+
+/// 判断是否显示流式消息气泡。
+#[inline]
+pub fn should_show_streaming(is_streaming: bool, has_real_assistant: bool, stream_content: &str) -> bool {
+    is_streaming && !has_real_assistant && !stream_content.trim().is_empty()
+}
+
+/// 检查最后一条消息是否为有内容的助手消息。
+#[inline]
+pub fn has_real_assistant_message(messages: &[crate::Message]) -> bool {
+    messages.last()
+        .map(|m| m.role == MessageRole::Assistant && !m.content.is_empty())
+        .unwrap_or(false)
+}
+
 #[with_css(css, "styles/components/conversation.scss")]
 #[component]
 pub fn MessageList() -> Element {
@@ -63,11 +95,9 @@ pub fn MessageList() -> Element {
     let stream_content = conv_store.streaming_content.read().clone();
     let stream_reasoning = conv_store.streaming_reasoning.read().clone();
 
-    let has_real_assistant = messages.last()
-        .map(|m| m.role == MessageRole::Assistant && !m.content.is_empty())
-        .unwrap_or(false);
+    let has_real_assistant = has_real_assistant_message(&messages);
 
-    let show_streaming = is_streaming && !has_real_assistant && !stream_content.trim().is_empty();
+    let show_streaming = should_show_streaming(is_streaming, has_real_assistant, &stream_content);
 
     let pg = conv_store.message_pagination.read();
     let has_older = pg.start_index > 0;
@@ -96,10 +126,10 @@ pub fn MessageList() -> Element {
             let max_scroll_top = (scroll_height - client_height).max(0.0);
 
             // 动态阈值：容器高度的 20%，限制在 [80, 200] 范围内
-            let threshold = (client_height * THRESHOLD_RATIO).clamp(THRESHOLD_MIN, THRESHOLD_MAX);
+            let threshold = compute_scroll_threshold(client_height);
 
             // 滚动到顶部 → 加载更早的消息
-            if can_load_older && scroll_top < threshold {
+            if should_load_older(can_load_older, scroll_top, threshold) {
                 let mut store = conv_store_for_scroll.clone();
                 let conv_id = cid.clone();
                 // 加载前记录 scrollHeight，加载后恢复滚动位置
@@ -130,7 +160,7 @@ pub fn MessageList() -> Element {
             }
 
             // 滚动到底部 → 加载更晚的消息
-            if can_load_newer && (max_scroll_top - scroll_top) < threshold {
+            if should_load_newer(can_load_newer, max_scroll_top, scroll_top, threshold) {
                 let mut store = conv_store_for_scroll.clone();
                 let conv_id = cid.clone();
                 spawn(async move {

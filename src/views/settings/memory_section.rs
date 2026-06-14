@@ -7,6 +7,8 @@ use dioxus_style::with_css;
 use rust_i18n::t;
 use crate::hooks::use_app;
 use crate::components::input::{Input, InputType};
+use crate::components::tooltip::Tooltip;
+use crate::icons::{Icon, tabler};
 
 fn get_max_memory_results(config: &Option<crate::models::config::XEChatConfig>) -> String {
     config.as_ref().map(|c| c.memory.max_memory_results.to_string()).unwrap_or_else(|| "5".to_string())
@@ -33,6 +35,13 @@ pub fn MemorySection() -> Element {
                 label {
                     class: "{css::form_label}",
                     "{max_results_text}"
+                    Tooltip {
+                        text: t!("settings.memory-max-results-hint").to_string(),
+                        span {
+                            class: "embed-provider-hint-icon",
+                            Icon { data: tabler::InfoCircle, size: "16" }
+                        }
+                    }
                 }
                 Input {
                     value: get_max_memory_results(&app_store.config.read()),

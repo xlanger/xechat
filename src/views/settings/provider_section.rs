@@ -10,6 +10,8 @@ use rust_i18n::t;
 use crate::hooks::use_app;
 use crate::components::input::{Input, InputType};
 use crate::components::collapse::Collapse;
+use crate::components::tooltip::Tooltip;
+use crate::icons::{Icon, tabler};
 use crate::models::ModelConfig;
 
 #[with_css(css, "styles/components/settings.scss")]
@@ -94,6 +96,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{max_tokens_text}"
+                        Tooltip {
+                            text: t!("settings.max-tokens-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -132,6 +141,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{temperature_text}"
+                        Tooltip {
+                            text: t!("settings.temperature-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -171,6 +187,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{top_p_text}"
+                        Tooltip {
+                            text: t!("settings.top-p-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -210,6 +233,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{frequency_penalty_text}"
+                        Tooltip {
+                            text: t!("settings.frequency-penalty-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -249,6 +279,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{presence_penalty_text}"
+                        Tooltip {
+                            text: t!("settings.presence-penalty-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -293,6 +330,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{context_window_text}"
+                        Tooltip {
+                            text: t!("settings.context-window-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -331,6 +375,13 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                     label {
                         class: "{css::form_label_compact}",
                         "{stop_sequences_text}"
+                        Tooltip {
+                            text: t!("settings.stop-sequences-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "14" }
+                            }
+                        }
                     }
                     {
                         let value = app_store.config.read().as_ref()
@@ -418,6 +469,13 @@ pub fn ProviderSection(provider_key: String) -> Element {
                             label {
                                 class: "{css::form_label}",
                                 "{base_url_text}"
+                                Tooltip {
+                                    text: t!("settings.base-url-hint").to_string(),
+                                    span {
+                                        class: "embed-provider-hint-icon",
+                                        Icon { data: tabler::InfoCircle, size: "16" }
+                                    }
+                                }
                             }
                             {
                                 let value = app_store.config.read().as_ref()
@@ -449,6 +507,13 @@ pub fn ProviderSection(provider_key: String) -> Element {
                             label {
                                 class: "{css::form_label}",
                                 "{timeout_text}"
+                                Tooltip {
+                                    text: t!("settings.timeout-hint").to_string(),
+                                    span {
+                                        class: "embed-provider-hint-icon",
+                                        Icon { data: tabler::InfoCircle, size: "16" }
+                                    }
+                                }
                             }
                             {
                                 let value = app_store.config.read().as_ref()
@@ -481,6 +546,13 @@ pub fn ProviderSection(provider_key: String) -> Element {
                         label {
                             class: "{css::form_label}",
                             "{api_key_text}"
+                            Tooltip {
+                                text: t!("settings.api-key-hint").to_string(),
+                                span {
+                                    class: "embed-provider-hint-icon",
+                                    Icon { data: tabler::InfoCircle, size: "16" }
+                                }
+                            }
                         }
                         {
                             let value = app_store.config.read().as_ref()

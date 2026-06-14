@@ -3,21 +3,21 @@ app:
   slogan: 对话赋能
 
 common:
-  please-select: — 请选择 —
+  please-select: "— 请选择 —"
 
 sidebar:
   new-chat: 新对话
   config: 设置
 
 welcome:
-  title: 欢迎使用 XEChat
+  title: "欢迎使用 XEChat"
   subtitle: 对话赋能
   start-chat: 开始新对话
 
 chat:
-  input-placeholder: 多想多问...
+  input-placeholder: "多想多问..."
   header-model: 模型
-  status-sending: 发送中...
+  status-sending: "发送中..."
   status-sent: 已发送
   status-failed: 发送失败
   status-truncated: 已停止生成
@@ -37,14 +37,14 @@ search:
   count-total-messages: "%{count} / %{total} 条消息"
   count-conversations: "%{count} 条"
   recent-conversations: 最近对话
-  search-placeholder: 搜索历史对话...
-  no-results: 未找到相关结果
+  search-placeholder: "搜索历史对话..."
+  no-results: "未找到相关结果"
 
 preview:
-  loading: 加载中...
+  loading: "加载中..."
   scroll-up: "↑ 向上滚动加载更多"
   scroll-down: "↓ 向下滚动加载更多"
-  empty: 选择一条搜索结果以预览对话内容
+  empty: "选择一条搜索结果以预览对话内容"
 
 conversation:
   default-title: 新对话
@@ -55,20 +55,23 @@ menu:
 
 modal:
   rename-title: 修改对话名称
-  rename-placeholder: 输入对话名称...
+  rename-placeholder: "输入对话名称..."
   delete-title: 删除对话
-  delete-message: 确定要删除这个对话吗？此操作不可恢复。
+  delete-message: "确定要删除这个对话吗？此操作不可恢复。"
   cancel: 取消
   confirm: 确认
   save: 保存
   delete-confirm: 删除
+  rebuild-title: "重建向量"
+  rebuild-message: "将使用当前嵌入模型重新编码所有对话轮次，已有向量将被替换。对话数量较多时可能需要较长时间，是否继续？"
+  rebuild-confirm: 重建
 
 config:
   title: 设置
   provider: 模型提供商
   model: 模型
   path: 配置文件
-  tip: 编辑 config.toml 添加新提供商或修改 API Key
+  tip: "编辑 config.toml 添加新提供商或修改 API Key"
 
 toast:
   config-saved: 配置已保存
@@ -76,20 +79,35 @@ toast:
   conversation-renamed: 对话已重命名
   conversation-deleted: 对话已删除
   error: 错误
+  turns-rebuilt: "嵌入模型变更，对话轮次向量已重建"
+
+rebuild:
+  progress: "正在重建轮次向量 %{current}/%{total}..."
+
+status:
+  network-ok: 网络正常
+  network-unavailable: 网络不可用
+  embed-model-not-ready: 模型未就绪
+  network-lost: "网络连接已断开"
+  network-restored: "网络连接已恢复"
+  ollama-connected: "Ollama 服务已连接"
+  ollama-disconnected: "Ollama 服务已断开"
+  embedder-ready: "嵌入模型已就绪"
+  embedder-unavailable: "嵌入模型不可用"
 
 error:
   network: 网络错误
   auth:
-    invalid-key: API Key 格式无效
-    unauthorized: 认证失败 (401)，请检查配置文件中的 API Key
+    invalid-key: "API Key 格式无效"
+    unauthorized: "认证失败 (401)，请检查配置文件中的 API Key"
   api:
-    http-error: API 请求失败
+    http-error: "API 请求失败"
   stream:
-    read-error: 流读取错误
+    read-error: "流读取错误"
   config:
-    failed: 配置操作失败
+    failed: "配置操作失败"
   io:
-    failed: 文件操作失败
+    failed: "文件操作失败"
   serialization:
     parse-error: 解析错误
   invalid-input: 输入无效
@@ -118,16 +136,16 @@ settings:
   embed-provider: 嵌入提供商
   chat-provider: 对话提供商
   chat-model: 对话模型
-  no-models: 暂无模型，请先添加
+  no-models: "暂无模型，请先添加"
   provider-name: 提供商名称
-  api-key: API Key
-  api-key-placeholder: 输入 API Key，留空则读取环境变量 {env}
-  base-url: Base URL
-  timeout: 超时时间（秒）
+  api-key: "API Key"
+  api-key-placeholder: "输入 API Key，留空则读取环境变量 {env}"
+  base-url: "Base URL"
+  timeout: "超时时间（秒）"
   model-params: 模型参数
-  max-tokens: 最大输出 Token 数
-  temperature: 温度（0-2）
-  top-p: Top P（0-1）
+  max-tokens: "最大输出 Token 数"
+  temperature: "温度（0-2）"
+  top-p: "Top P（0-1）"
   frequency-penalty: 频率惩罚
   presence-penalty: 存在惩罚
   context-window: 上下文窗口
@@ -137,31 +155,51 @@ settings:
   config-tip: 修改将自动保存到配置文件
   memory: 记忆与搜索
   memory-max-results: 记忆检索最大条数
-  memory-ollama-host: Ollama 服务地址
-  memory-ollama-host-placeholder: http://localhost:11434
-  memory-ollama-model: Ollama 嵌入模型（可选）
-  memory-ollama-model-placeholder: 如 BAAI/bge-base-zh-v1.5
-  memory-ollama-chat-model: Ollama 聊天模型（可选）
-  memory-ollama-chat-model-placeholder: 如 qwen3:7b
+  memory-ollama-host: "Ollama 服务地址"
+  memory-ollama-host-placeholder: "http://localhost:11434"
+  memory-ollama-model: "Ollama 嵌入模型（可选）"
+  memory-ollama-model-placeholder: "如 BAAI/bge-base-zh-v1.5"
+  memory-ollama-chat-model: "Ollama 聊天模型（可选）"
+  memory-ollama-chat-model-placeholder: "如 qwen3:7b"
   add-model: 添加模型
   add-model-placeholder: 输入模型名称
-  openai-compatible: OpenAI Compatible
+  openai-compatible: "OpenAI Compatible"
   delete-model: 删除模型
-  ollama: Ollama 扩展
+  ollama: "Ollama 扩展"
   ollama-host: 服务地址
-  ollama-host-placeholder: http://localhost:11434
+  ollama-host-placeholder: "http://localhost:11434"
   ollama-embed-provider: 嵌入模型
-  ollama-embed-provider-default: E5 Base（内置）
-  ollama-embed-provider-ollama: Ollama 扩展
+  ollama-embed-provider-default: "内置（默认）"
+  ollama-embed-provider-ollama: "Ollama 扩展"
+  embed-provider-hint: "内置模型无需配置；Ollama 支持更长上下文。切换提供商会重建语义搜索向量。"
+  embed-model-hint: "用于将消息转换为可搜索向量的模型，支持语义搜索功能。"
+  chat-provider-hint: "对话的 AI 服务提供商（如 DeepSeek、OpenAI 或本地 Ollama）。"
+  chat-model-hint: "用于生成回复的具体 AI 模型，可选范围取决于当前选择的服务商。"
+  embed-status-hint: "显示嵌入模型的下载/就绪状态，并可手动重建搜索向量。"
+  rebuild-vectors-hint: "用当前嵌入模型重新编码所有历史对话，更新语义搜索结果。"
+  memory-max-results-hint: "语义搜索时最多检索的历史对话数量（1-20）。"
+  base-url-hint: "该提供商的 API 接口地址。留空使用默认地址。"
+  timeout-hint: "请求超时时间（秒）。响应慢或模型较大时可适当增加。"
+  api-key-hint: "该提供商的认证密钥。大多数云服务需要；本地 Ollama 可留空。"
+  max-tokens-hint: "单次回复的最大 token 数。值越大回复越长，但消耗也越多。"
+  temperature-hint: "控制创造性：越低越专注，越高越随机。范围 0-2，推荐约 0.7。"
+  top-p-hint: "核采样：只考虑累计概率在此阈值内的 token（0-1），与 temperature 配合使用。"
+  frequency-penalty-hint: "减少对话中已出现词语的重复。范围 0-2，0 表示关闭。"
+  presence-penalty-hint: "鼓励讨论新话题而非重复之前的内容。范围 0-2，0 表示关闭。"
+  context-window-hint: "该模型支持的最大上下文长度。更大的窗口能保留更多对话历史。"
+  stop-sequences-hint: '遇到这些短语时停止生成，用逗号分隔（如 "END", "###"）。'
+  ollama-host-hint: "本地 Ollama 服务地址，默认 http://localhost:11434。请确保 Ollama 已启动。"
   ollama-embed-model: 嵌入模型
-  ollama-embed-model-placeholder: 如 BAAI/bge-base-zh-v1.5
+  ollama-embed-model-placeholder: "如 Qwen3-Embedding-4B"
   ollama-chat-provider: 对话模型
   ollama-chat-model: 对话模型
-  ollama-chat-model-placeholder: 如 qwen3:7b
+  ollama-chat-model-placeholder: "如 qwen3:7b"
   embed-model-status: 嵌入模型状态
   embed-model-ready: 已就绪
   embed-model-not-found: 未下载
-  embed-model-downloading: 下载中... %{percent}%
+  embed-model-downloading: "下载中... %{percent}%"
   embed-model-download: 下载模型
   embed-model-download-failed: 下载失败
-  embed-model-size: 约 430MB
+  embed-model-size: "约 530MB"
+  rebuild_vectors: 重建向量
+  rebuild_vectors_hint: "使用当前嵌入模型重新编码所有对话轮次"

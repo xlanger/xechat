@@ -81,6 +81,30 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+
+    .embed-provider-hint-icon {
+        display: inline-flex;
+        align-items: center;
+        color: var(--text-tertiary);
+        cursor: help;
+        opacity: 0.6;
+        transition: opacity 0.15s ease;
+
+        &:hover {
+            opacity: 1;
+            color: var(--accent, #3b82f6);
+        }
+    }
+}
+
+.form-hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+    line-height: 1.4;
 }
 
 .form-value {
@@ -213,4 +237,178 @@
     &:focus {
         border-color: var(--text-secondary);
     }
+}
+
+// ========== 嵌入模型状态（与 form-row / form-value 风格一致）==========
+
+.embed-model-status {
+    // 状态行：图标 + 文字 + 操作按钮（已就绪时使用）
+    // 样式对齐 .form-value：统一高度、圆角、边框、内边距
+    .embed-status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 42px;
+        padding: 0 14px;
+        background: var(--bg-root);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+
+        .embed-status-icon {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--color-success, #22c55e);
+        }
+
+        .embed-status-text-success {
+            font-size: 14px;
+            color: var(--color-success, #22c55e);
+            font-weight: 400;
+        }
+
+        .embed-rebuild-btn {
+            flex-shrink: 0;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+
+            &:hover {
+                border-color: var(--accent, #3b82f6);
+                color: var(--accent, #3b82f6);
+                background: rgba(59, 130, 246, 0.06);
+            }
+
+            &:active {
+                transform: scale(0.97);
+            }
+        }
+    }
+
+    // 进度条容器：高度与 form-value 一致（~42px）
+    .embed-progress-bar {
+        position: relative;
+        width: 100%;
+        height: 42px;
+        background: var(--bg-inset, rgba(128, 128, 128, 0.12));
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+    }
+
+    .embed-progress-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent, #3b82f6), rgba(59, 130, 246, 0.7));
+        border-radius: 8px;
+        transition: width 0.3s ease;
+    }
+
+    // 进度条内文字层（悬浮在进度条上方）
+    .embed-progress-label {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        height: 100%;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text);
+        white-space: nowrap;
+
+        .embed-progress-icon {
+            flex-shrink: 0;
+            animation: embed-spin 1s linear infinite;
+        }
+    }
+
+    // 操作按钮行：下载按钮 + 文件大小（左右分布）
+    // 样式对齐 .form-value：统一高度、圆角、边框、内边距
+    .embed-action-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 42px;
+        padding: 0 14px;
+        background: var(--bg-root);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+
+        .embed-download-btn {
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s ease;
+            white-space: nowrap;
+
+            &:hover:not(:disabled) {
+                border-color: var(--accent, #3b82f6);
+                color: var(--accent, #3b82f6);
+                background: rgba(59, 130, 246, 0.06);
+            }
+
+            &:active:not(:disabled) {
+                transform: scale(0.97);
+            }
+
+            &:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+        }
+
+        .embed-model-size {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            white-space: nowrap;
+        }
+    }
+
+    // 错误提示卡片（失败时显示在按钮下方）
+    .embed-error-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 10px;
+        background: rgba(239, 68, 68, 0.08);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        border-radius: 8px;
+        font-size: 12px;
+        color: var(--color-error, #ef4444);
+        line-height: 1.4;
+
+        .embed-error-icon {
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .embed-error-msg {
+            flex: 1;
+            word-break: break-word;
+        }
+    }
+}
+
+@keyframes embed-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }

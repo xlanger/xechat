@@ -98,6 +98,109 @@ pub fn extract_error_from_body(body: &str) -> Option<String> {
     None
 }
 
+/// 从 SSE 行中提取 `data: ` 前缀后的数据字段。
+///
+/// # Arguments
+///
+/// * `line` - SSE 流中的一行文本
+///
+/// # Returns
+///
+/// 若行以 `data: ` 开头则返回 `Some(数据内容)`，否则返回 `None`。
+pub fn extract_data_field(line: &str) -> Option<&str> {
+    line.strip_prefix("data: ")
+}
+
+/// 判断 SSE 行是否为元数据行（event:/id:/retry:）或空行。
+pub fn is_sse_metadata_or_empty(line: &str) -> bool {
+    line.starts_with("event:")
+        || line.starts_with("id:")
+        || line.starts_with("retry:")
+        || line.is_empty()
+}
+
+/// 处理 SSE data 字段内容，解析为 `StreamEvent` 并通过 channel 推送。
+///
+/// 遇到 `[DONE]` 或错误响应时返回 `true`，表示流应终止。
+pub fn handle_sse_data(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> bool {
+    use crate::models::ai::ChatResponse;
+
+    if data == "[DONE]" {
+        let _ = tx.send(StreamEvent::Complete);
+        return true;
+    }
+
+    if let Ok(resp) = serde_json::from_str::<ChatResponse>(data) {
+        if let Some(delta) = resp.choices.first().and_then(|c| c.delta.as_ref()) {
+            if let Some(content) = delta.content.as_ref() {
+                let _ = tx.send(StreamEvent::Chunk(content.clone()));
+            }
+            if let Some(reasoning) = delta.reasoning_content.as_ref() {
+                let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.clone()));
+            }
+        }
+        return false;
+    }
+
+    if let Ok(err_resp) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(error_msg) = err_resp["error"]["message"].as_str() {
+            let _ = tx.send(StreamEvent::Error(AppError::Api {
+                status: 0,
+                body: Some(error_msg.to_string()),
+            }));
+            return true;
+        }
+    }
+
+    false
+}
+
+/// 处理 SSE 缓冲区中的完整行，返回是否应终止流。
+///
+/// 遍历缓冲区中的所有行，对 `data: ` 行调用 `handle_sse_data`，
+/// 将不完整的最后一行保留在缓冲区中。
+///
+/// # Arguments
+///
+/// * `lines` - 按换行符分割的行列表
+/// * `tx` - 用于推送 StreamEvent 的 channel 发送端
+/// * `buffer` - 不完整行的缓冲区（会被清空后重填）
+///
+/// # Returns
+///
+/// 若遇到 `[DONE]` 或错误响应返回 `true`，表示流应终止。
+pub fn process_sse_lines(
+    lines: &[String],
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+    buffer: &mut String,
+) -> bool {
+    buffer.clear();
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(data) = extract_data_field(line) {
+            if handle_sse_data(data, tx) {
+                return true;
+            }
+        } else if !is_sse_metadata_or_empty(line) && i == lines.len() - 1 {
+            buffer.push_str(line);
+            buffer.push('\n');
+        }
+    }
+    false
+}
+
+/// 处理 SSE 流中的一个数据块：追加到缓冲区并处理完整行。
+///
+/// 返回 `true` 表示流应终止（遇到 [DONE] 或错误）。
+pub fn process_stream_chunk(
+    chunk: &[u8],
+    buffer: &mut String,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+) -> bool {
+    buffer.push_str(&String::from_utf8_lossy(chunk));
+    let lines: Vec<String> = buffer.lines().map(|l| l.to_owned()).collect();
+    process_sse_lines(&lines, tx, buffer)
+}
+
 /// 解析 SSE (Server-Sent Events) 流式响应。
 ///
 /// 从 HTTP Response 的字节流中逐行读取 SSE 数据行，
@@ -113,58 +216,14 @@ pub async fn parse_sse_stream(
     response: Response,
     tx: mpsc::UnboundedSender<StreamEvent>,
 ) {
-    use crate::models::ai::ChatResponse;
-
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
 
     while let Some(chunk_result) = stream.next().await {
         match chunk_result {
             Ok(chunk) => {
-                buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-                let lines: Vec<String> = buffer.lines().map(|l| l.to_owned()).collect();
-                buffer.clear();
-
-                for (i, line) in lines.iter().enumerate() {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" {
-                            let _ = tx.send(StreamEvent::Complete);
-                            return;
-                        }
-                        if let Ok(resp) = serde_json::from_str::<ChatResponse>(data) {
-                            if let Some(delta) = resp
-                                .choices
-                                .first()
-                                .and_then(|c| c.delta.as_ref())
-                            {
-                                if let Some(content) = delta.content.as_ref() {
-                                    let _ = tx.send(StreamEvent::Chunk(content.clone()));
-                                }
-                                if let Some(reasoning) = delta.reasoning_content.as_ref() {
-                                    let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.clone()));
-                                }
-                            }
-                        } else if let Ok(err_resp) =
-                            serde_json::from_str::<serde_json::Value>(data)
-                        {
-                            if let Some(error_msg) = err_resp["error"]["message"].as_str() {
-                                let _ = tx.send(StreamEvent::Error(AppError::Api {
-                                    status: 0,
-                                    body: Some(error_msg.to_string()),
-                                }));
-                                return;
-                            }
-                        }
-                    } else if line.starts_with("event:")
-                        || line.starts_with("id:")
-                        || line.starts_with("retry:")
-                    {
-                    } else if line.is_empty() {
-                    } else if i == lines.len() - 1 {
-                        buffer.push_str(line);
-                        buffer.push('\n');
-                    }
+                if process_stream_chunk(&chunk, &mut buffer, &tx) {
+                    return;
                 }
             }
             Err(e) => {

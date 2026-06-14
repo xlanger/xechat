@@ -34,6 +34,11 @@
         color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
+.select-trigger-disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .select-trigger-label {
     flex: 1;
     overflow: hidden;

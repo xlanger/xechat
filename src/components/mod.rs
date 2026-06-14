@@ -11,5 +11,6 @@ pub mod markdown;
 pub mod modals;
 pub mod input;
 pub mod collapse;
+pub mod tooltip;
 // pub mod button;
 // pub mod settings;

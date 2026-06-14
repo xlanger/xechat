@@ -1,0 +1,74 @@
+// ========== 通用提示浮窗 (Tooltip) ==========
+// class 给 dioxus_style 宏用，data-tooltip 给 JS/CSS 属性选择器用
+
+.tooltip-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+// 气泡主体：默认隐藏
+.tooltip-bubble {
+    position: absolute;
+    z-index: 1000;
+    // 定位由 JS 控制（position:fixed + top/left）
+    // 不设 left/transform，避免影响内容宽度计算
+    width: auto;
+    max-width: 280px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.5;
+    white-space: normal;
+    word-break: break-word;
+    pointer-events: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transition: opacity 0.12s ease;
+
+    // 主题色
+    background: var(--bg-popover, var(--bg-root));
+    color: var(--text-primary, var(--text));
+    border: 1px solid var(--border);
+
+    // 小三角箭头
+    .tooltip-arrow {
+        position: absolute;
+        left: 50%;
+        width: 8px;
+        height: 8px;
+        transform: translateX(-50%) rotate(45deg);
+        background: inherit;
+        border-right: inherit;
+        border-bottom: inherit;
+        box-shadow: 2px 2px 3px rgba(0, 0, 0, 0.1);
+    }
+}
+
+// 上方显示
+.tooltip-top {
+    bottom: calc(100% + 8px);
+
+    .tooltip-arrow {
+        bottom: -5px;
+        border-top: none;
+        border-left: none;
+    }
+}
+
+// 下方显示
+.tooltip-bottom {
+    top: calc(100% + 8px);
+
+    .tooltip-arrow {
+        top: -5px;
+        border-bottom: none;
+        border-right: none;
+    }
+}
+
+// 显示状态：通过 data-visible 属性控制
+[data-tooltip="wrapper"][data-visible="true"] [data-tooltip="bubble"] {
+    opacity: 1;
+}

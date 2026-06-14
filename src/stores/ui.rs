@@ -40,6 +40,8 @@ pub struct UIStore {
     pub show_rename_modal: Signal<Option<String>>,
     /// 删除确认弹窗的目标对话 ID（`None` 表示隐藏）
     pub show_delete_modal: Signal<Option<String>>,
+    /// 是否显示重建向量确认弹窗
+    pub show_rebuild_modal: Signal<bool>,
     /// 当前打开的右键菜单对应的元素 ID（`None` 表示无菜单打开）
     pub open_menu_id: Signal<Option<String>>,
     /// 是否打开顶部栏下拉菜单
@@ -71,6 +73,7 @@ impl UIStore {
             show_config_modal: Signal::new(false),
             show_rename_modal: Signal::new(None),
             show_delete_modal: Signal::new(None),
+            show_rebuild_modal: Signal::new(false),
             open_menu_id: Signal::new(None),
             open_header_menu: Signal::new(false),
             active_toast: Signal::new(None),

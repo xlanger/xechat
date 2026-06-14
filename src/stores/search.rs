@@ -108,42 +108,32 @@ impl SearchStore {
         }
     }
 
-    pub async fn execute_search(&mut self) {
-        let query = self.query.read().clone();
-        if query.trim().is_empty() {
-            self.results.set(Vec::new());
-            return;
+    /// 执行全文搜索，失败时打印错误并返回空列表。
+    async fn run_fulltext_search(query: &str) -> Vec<SearchResult> {
+        match crate::services::search::fulltext_search(query, SEARCH_PAGE_SIZE).await {
+            Ok(results) => results,
+            Err(e) => {
+                eprintln!("[xechat] Fulltext search failed: {}", e);
+                Vec::new()
+            }
         }
+    }
 
-        self.is_searching.set(true);
+    /// 执行语义搜索，失败时返回空列表。
+    async fn run_semantic_search(query: &str) -> Vec<SearchResult> {
+        crate::services::search::semantic_search(query, SEARCH_PAGE_SIZE)
+            .await
+            .unwrap_or_default()
+    }
 
-        let search_type = self.search_type.read().clone();
-        let results = match search_type {
-            SearchType::FullText => {
-                match crate::services::search::fulltext_search(&query, SEARCH_PAGE_SIZE).await {
-                    Ok(results) => results,
-                    Err(e) => {
-                        eprintln!("[xechat] Fulltext search failed: {}", e);
-                        Vec::new()
-                    }
-                }
-            }
-            SearchType::Semantic => {
-                crate::services::search::semantic_search(&query, SEARCH_PAGE_SIZE)
-                    .await
-                    .unwrap_or_default()
-            }
+    /// 根据搜索类型执行搜索并返回结果。
+    pub async fn dispatch_search(query: &str, search_type: &SearchType) -> Vec<SearchResult> {
+        match search_type {
+            SearchType::FullText => Self::run_fulltext_search(query).await,
+            SearchType::Semantic => Self::run_semantic_search(query).await,
             SearchType::Hybrid => {
-                let fulltext = match crate::services::search::fulltext_search(&query, SEARCH_PAGE_SIZE).await {
-                    Ok(results) => results,
-                    Err(e) => {
-                        eprintln!("[xechat] Fulltext search failed: {}", e);
-                        Vec::new()
-                    }
-                };
-                let semantic = crate::services::search::semantic_search(&query, SEARCH_PAGE_SIZE)
-                    .await
-                    .unwrap_or_default();
+                let fulltext = Self::run_fulltext_search(query).await;
+                let semantic = Self::run_semantic_search(query).await;
                 if semantic.is_empty() {
                     fulltext
                 } else {
@@ -154,7 +144,20 @@ impl SearchStore {
                     )
                 }
             }
-        };
+        }
+    }
+
+    pub async fn execute_search(&mut self) {
+        let query = self.query.read().clone();
+        if query.trim().is_empty() {
+            self.results.set(Vec::new());
+            return;
+        }
+
+        self.is_searching.set(true);
+
+        let search_type = self.search_type.read().clone();
+        let results = Self::dispatch_search(&query, &search_type).await;
 
         self.results.set(results);
         self.is_searching.set(false);

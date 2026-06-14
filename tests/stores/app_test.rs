@@ -228,3 +228,179 @@ fn test_navigate_to_welcome_from_settings() {
         assert_eq!((store.main_route)(), MainRoute::Welcome);
     });
 }
+
+// ── parse_theme_mode, parse_language, normalize_timezone, is_local_url, resolve_primary_url ──
+
+#[test]
+fn test_parse_theme_mode_dark() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_theme_mode("dark"), ThemeMode::Dark);
+    });
+}
+
+#[test]
+fn test_parse_theme_mode_light() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_theme_mode("light"), ThemeMode::Light);
+    });
+}
+
+#[test]
+fn test_parse_theme_mode_system() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_theme_mode("system"), ThemeMode::System);
+    });
+}
+
+#[test]
+fn test_parse_theme_mode_unknown() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_theme_mode("unknown"), ThemeMode::System);
+    });
+}
+
+#[test]
+fn test_parse_theme_mode_empty() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_theme_mode(""), ThemeMode::System);
+    });
+}
+
+#[test]
+fn test_parse_language_en() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_language("en"), Language::En);
+    });
+}
+
+#[test]
+fn test_parse_language_system() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_language("system"), Language::System);
+    });
+}
+
+#[test]
+fn test_parse_language_zh() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_language("zh"), Language::Zh);
+    });
+}
+
+#[test]
+fn test_parse_language_unknown_defaults_zh() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_language("fr"), Language::Zh);
+    });
+}
+
+#[test]
+fn test_parse_language_empty_defaults_zh() {
+    with_runtime(|| {
+        assert_eq!(AppStore::parse_language(""), Language::Zh);
+    });
+}
+
+#[test]
+fn test_normalize_timezone_system() {
+    with_runtime(|| {
+        assert_eq!(AppStore::normalize_timezone("system"), "system");
+    });
+}
+
+#[test]
+fn test_normalize_timezone_empty() {
+    with_runtime(|| {
+        assert_eq!(AppStore::normalize_timezone(""), "system");
+    });
+}
+
+#[test]
+fn test_normalize_timezone_iana() {
+    with_runtime(|| {
+        assert_eq!(AppStore::normalize_timezone("Asia/Shanghai"), "Asia/Shanghai");
+    });
+}
+
+#[test]
+fn test_normalize_timezone_utc() {
+    with_runtime(|| {
+        assert_eq!(AppStore::normalize_timezone("UTC"), "UTC");
+    });
+}
+
+#[test]
+fn test_is_local_url_localhost() {
+    with_runtime(|| {
+        assert!(AppStore::is_local_url("http://localhost:8080"));
+    });
+}
+
+#[test]
+fn test_is_local_url_localhost_no_port() {
+    with_runtime(|| {
+        assert!(AppStore::is_local_url("http://localhost"));
+    });
+}
+
+#[test]
+fn test_is_local_url_127() {
+    with_runtime(|| {
+        assert!(AppStore::is_local_url("http://127.0.0.1:11434"));
+    });
+}
+
+#[test]
+fn test_is_local_url_ipv6_loopback() {
+    with_runtime(|| {
+        assert!(AppStore::is_local_url("http://[::1]:8080"));
+    });
+}
+
+#[test]
+fn test_is_local_url_remote() {
+    with_runtime(|| {
+        assert!(!AppStore::is_local_url("https://api.openai.com"));
+    });
+}
+
+#[test]
+fn test_is_local_url_https_localhost() {
+    with_runtime(|| {
+        assert!(!AppStore::is_local_url("https://localhost:8080"));
+    });
+}
+
+#[test]
+fn test_resolve_primary_url_ollama_default() {
+    with_runtime(|| {
+        let config = XEChatConfig::default();
+        // Default provider may not be ollama, but we can test with ollama provider
+        let mut config = config;
+        config.model_provider = "ollama".to_string();
+        let url = AppStore::resolve_primary_url(&config);
+        assert_eq!(url, Some("http://localhost:11434".to_string()));
+    });
+}
+
+#[test]
+fn test_resolve_primary_url_ollama_custom_host() {
+    with_runtime(|| {
+        let mut config = XEChatConfig::default();
+        config.model_provider = "ollama".to_string();
+        config.preferences.ollama.host = "http://192.168.1.100:11434".to_string();
+        let url = AppStore::resolve_primary_url(&config);
+        assert_eq!(url, Some("http://192.168.1.100:11434".to_string()));
+    });
+}
+
+#[test]
+fn test_resolve_primary_url_no_provider() {
+    with_runtime(|| {
+        let config = XEChatConfig::default();
+        let url = AppStore::resolve_primary_url(&config);
+        // Depends on default config, just verify it doesn't panic
+        // It should return None or Some depending on config
+        let _ = url;
+    });
+}

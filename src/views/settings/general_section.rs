@@ -6,8 +6,10 @@
 use dioxus::prelude::*;
 use dioxus_style::with_css;
 use rust_i18n::t;
+use crate::icons::{Icon, tabler};
 use crate::hooks::use_app;
 use crate::components::custom_select::CustomSelect;
+use crate::components::tooltip::Tooltip;
 
 fn get_theme(config: &Option<crate::models::config::XEChatConfig>) -> String {
     config
@@ -57,6 +59,7 @@ fn timezone_options() -> Vec<(String, String)> {
 #[component]
 pub fn GeneralSection() -> Element {
     let mut app_store = use_app();
+    let mut ui_store = crate::hooks::use_ui();
 
     // Ollama 探测结果缓存
     let mut ollama_models: Signal<Vec<String>> = use_signal(Vec::new);
@@ -66,6 +69,7 @@ pub fn GeneralSection() -> Element {
     let model_ready: Signal<bool> = use_signal(|| crate::services::model_downloader::is_model_ready());
     let model_downloading: Signal<bool> = use_signal(|| false);
     let model_progress: Signal<String> = use_signal(String::new);
+    let model_progress_percent: Signal<u32> = use_signal(|| 0u32);
     let model_error: Signal<String> = use_signal(String::new);
 
     let general_text = t!("settings.general").to_string();
@@ -198,6 +202,16 @@ pub fn GeneralSection() -> Element {
             } else {
                 ollama_embed_models.set(Vec::new());
             }
+            // 重新初始化嵌入器，触发变更检测和 turns 表重建
+            let mut ui = ui_store.clone();
+            spawn(async move {
+                let mut conv = crate::hooks::use_conversation();
+                let rebuilt = conv.reinit_embedder().await;
+                if rebuilt {
+                    let msg = t!("toast.turns-rebuilt").to_string();
+                    ui.show_toast(crate::stores::ui::ToastKind::Info, msg, 5000);
+                }
+            });
         }
     };
 
@@ -270,6 +284,13 @@ pub fn GeneralSection() -> Element {
                     label {
                         class: "{css::form_label}",
                         "{embed_provider_text}"
+                        Tooltip {
+                            text: t!("settings.embed-provider-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
                     }
                     CustomSelect {
                         options: embed_provider_options.clone(),
@@ -282,9 +303,20 @@ pub fn GeneralSection() -> Element {
                     label {
                         class: "{css::form_label}",
                         "{embed_model_text}"
+                        Tooltip {
+                            text: t!("settings.embed-model-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
                     }
                     {
-                        let embed_model_opts = if current_embed_provider == "ollama" {
+                        let is_builtin = current_embed_provider != "ollama";
+                        let embed_model_opts = if is_builtin {
+                            // 内置模式：单选项，显示实际模型名
+                            vec![("default".to_string(), "Qwen3-Embedding-0.6B".to_string())]
+                        } else {
                             let mut opts: Vec<(String, String)> = vec![];
                             let detected = ollama_embed_models.read();
                             for name in detected.iter() {
@@ -295,23 +327,32 @@ pub fn GeneralSection() -> Element {
                             } else {
                                 opts
                             }
-                        } else {
-                            vec![("default".to_string(), "E5".to_string())]
                         };
-                        let current_embed_model = if current_embed_provider == "ollama" {
+                        let current_embed_model = if is_builtin {
+                            "default".to_string()
+                        } else {
                             app_store.config.read().as_ref()
                                 .map(|c| c.preferences.ollama.embed_model.clone())
                                 .unwrap_or_default()
-                        } else {
-                            "default".to_string()
                         };
                         rsx! {
                             CustomSelect {
                                 options: embed_model_opts,
                                 value: current_embed_model,
+                                disabled: is_builtin,
                                 on_select: move |v: String| {
                                     app_store.update_config(|config| {
                                         config.preferences.ollama.embed_model = v;
+                                    });
+                                    // ollama 嵌入模型变更时也触发重建
+                                    let mut ui = ui_store.clone();
+                                    spawn(async move {
+                                        let mut conv = crate::hooks::use_conversation();
+                                        let rebuilt = conv.reinit_embedder().await;
+                                        if rebuilt {
+                                            let msg = t!("toast.turns-rebuilt").to_string();
+                                            ui.show_toast(crate::stores::ui::ToastKind::Info, msg, 5000);
+                                        }
                                     });
                                 },
                             }
@@ -319,84 +360,109 @@ pub fn GeneralSection() -> Element {
                     }
                 }
             }
-            // 嵌入模型下载状态（仅在使用内置 E5 时显示）
+            // 嵌入模型下载状态（仅在使用内置 Qwen3-Embedding 时显示）
             if current_embed_provider != "ollama" {
                 div {
                     class: "{css::form_row}",
                     label {
                         class: "{css::form_label}",
                         {t!("settings.embed-model-status").to_string()}
+                        Tooltip {
+                            text: t!("settings.embed-status-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
                     }
                     div {
-                        class: "{css::form_value}",
-                        style: "display:flex;align-items:center;justify-content:space-between;gap:8px;",
+                        class: "{css::embed_model_status}",
                         if model_ready() {
-                            span {
-                                style: "color:var(--color-success, #22c55e);font-size:13px;",
-                                {t!("settings.embed-model-ready").to_string()}
-                            }
-                        } else if model_downloading() {
-                            span {
-                                style: "color:var(--color-accent);font-size:13px;",
-                                {model_progress()}
-                            }
-                        } else {
-                            span {
-                                style: "display:flex;align-items:center;gap:8px;",
+                            // 已就绪：状态 + 重建按钮
+                            div {
+                                class: "{css::embed_status_row}",
                                 span {
-                                    style: "color:var(--color-error, #ef4444);font-size:13px;",
-                                    {t!("settings.embed-model-not-found").to_string()}
+                                    class: "{css::embed_status_text_success}",
+                                    {t!("settings.embed-model-ready").to_string()}
                                 }
-                                if !model_error().is_empty() {
-                                    span {
-                                        style: "color:var(--text-tertiary);font-size:11px;",
-                                        {model_error()}
-                                    }
+                                span {
+                                    class: "{css::embed_status_icon}",
+                                    Icon { data: tabler::Check, size: "14" }
                                 }
                                 button {
-                                    style: "padding:4px 12px;font-size:12px;border-radius:6px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);cursor:pointer;",
-                                    disabled: model_downloading(),
+                                    class: "{css::embed_rebuild_btn}",
+                                    onclick: move |_| {
+                                        ui_store.show_rebuild_modal.set(true);
+                                    },
+                                    {t!("settings.rebuild_vectors").to_string()}
+                                }
+                            }
+                        } else if model_downloading() {
+                            // 下载中：进度条（高度同按钮，内含百分比文字）
+                            div {
+                                class: "{css::embed_progress_bar}",
+                                div {
+                                    class: "{css::embed_progress_fill}",
+                                    style: "width:{model_progress_percent()}%;",
+                                }
+                                div {
+                                    class: "{css::embed_progress_label}",
+                                    span {
+                                        class: "{css::embed_progress_icon}",
+                                        Icon { data: tabler::Loader, size: "14" }
+                                    }
+                                    {model_progress()}
+                                }
+                            }
+                        } else {
+                            // 未下载 / 失败：按钮行
+                            div {
+                                class: "{css::embed_action_row}",
+                                button {
+                                    class: "{css::embed_download_btn}",
                                     onclick: {
                                         let mut model_downloading = model_downloading;
                                         let mut model_progress = model_progress;
+                                        let mut model_progress_percent = model_progress_percent;
                                         let model_ready = model_ready;
                                         let mut model_error = model_error;
                                         move |_| {
                                             model_downloading.set(true);
                                             model_error.set(String::new());
+                                            model_progress_percent.set(0);
                                             model_progress.set(t!("settings.embed-model-downloading", percent = 0).to_string());
-                                            // 使用 channel 传递进度，避免 Signal 的 Send+Sync 限制
                                             let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::services::model_downloader::DownloadProgress>(32);
-                                            // 在 spawn 中接收进度并更新 Signal
-                                            let mut model_progress = model_progress;
-                                            let mut model_ready = model_ready;
-                                            let mut model_downloading = model_downloading;
-                                            let mut model_error = model_error;
+                                            let mut mp = model_progress;
+                                            let mut mpp = model_progress_percent;
+                                            let mut mr = model_ready;
+                                            let mut md = model_downloading;
+                                            let mut me = model_error;
                                             spawn(async move {
                                                 while let Some(p) = rx.recv().await {
                                                     match p {
                                                         crate::services::model_downloader::DownloadProgress::Downloading(downloaded, total) => {
-                                                            let percent = if total > 0 {
+                                                            let pct = if total > 0 {
                                                                 (downloaded as f64 / total as f64 * 100.0) as u32
                                                             } else {
                                                                 0
                                                             };
-                                                            model_progress.set(t!("settings.embed-model-downloading", percent = percent).to_string());
+                                                            mpp.set(pct);
+                                                            mp.set(t!("settings.embed-model-downloading", percent = pct).to_string());
                                                         }
                                                         crate::services::model_downloader::DownloadProgress::Completed => {
-                                                            model_ready.set(true);
-                                                            model_downloading.set(false);
+                                                            mr.set(true);
+                                                            md.set(false);
+                                                            mpp.set(100);
                                                             break;
                                                         }
                                                         crate::services::model_downloader::DownloadProgress::Failed(msg) => {
-                                                            model_error.set(msg);
-                                                            model_downloading.set(false);
+                                                            me.set(msg);
+                                                            md.set(false);
                                                             break;
                                                         }
                                                     }
                                                 }
                                             });
-                                            // 下载任务：通过 channel 发送进度
                                             let tx_err = tx.clone();
                                             spawn(async move {
                                                 let on_progress = std::sync::Arc::new(move |p: crate::services::model_downloader::DownloadProgress| {
@@ -413,11 +479,63 @@ pub fn GeneralSection() -> Element {
                                     },
                                     {t!("settings.embed-model-download").to_string()}
                                 }
+                                span {
+                                    class: "{css::embed_model_size}",
+                                    {t!("settings.embed-model-size").to_string()}
+                                }
+                            }
+                            // 错误提示（失败时在按钮下方显示）
+                            if !model_error().is_empty() {
+                                div {
+                                    class: "{css::embed_error_card}",
+                                    span {
+                                        class: "{css::embed_error_icon}",
+                                        Icon { data: tabler::AlertCircle, size: "14" }
+                                    }
+                                    span {
+                                        class: "{css::embed_error_msg}",
+                                        {model_error()}
+                                    }
+                                }
                             }
                         }
-                        span {
-                            style: "color:var(--text-tertiary);font-size:11px;",
-                            {t!("settings.embed-model-size").to_string()}
+                    }
+                }
+            }
+            // Ollama 模式下的重建向量按钮
+            if current_embed_provider == "ollama" {
+                div {
+                    class: "{css::form_row}",
+                    label {
+                        class: "{css::form_label}",
+                        {t!("settings.embed-model-status").to_string()}
+                        Tooltip {
+                            text: t!("settings.embed-status-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
+                    }
+                    div {
+                        class: "{css::embed_model_status}",
+                        div {
+                            class: "{css::embed_status_row}",
+                            span {
+                                class: "{css::embed_status_text_success}",
+                                {t!("settings.embed-model-ready").to_string()}
+                            }
+                            span {
+                                class: "{css::embed_status_icon}",
+                                Icon { data: tabler::Check, size: "14" }
+                            }
+                            button {
+                                class: "{css::embed_rebuild_btn}",
+                                onclick: move |_| {
+                                    ui_store.show_rebuild_modal.set(true);
+                                },
+                                {t!("settings.rebuild_vectors").to_string()}
+                            }
                         }
                     }
                 }
@@ -429,6 +547,13 @@ pub fn GeneralSection() -> Element {
                     label {
                         class: "{css::form_label}",
                         "{chat_provider_text}"
+                        Tooltip {
+                            text: t!("settings.chat-provider-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
                     }
                     CustomSelect {
                         options: provider_options.clone(),
@@ -441,6 +566,13 @@ pub fn GeneralSection() -> Element {
                     label {
                         class: "{css::form_label}",
                         "{chat_model_text}"
+                        Tooltip {
+                            text: t!("settings.chat-model-hint").to_string(),
+                            span {
+                                class: "embed-provider-hint-icon",
+                                Icon { data: tabler::InfoCircle, size: "16" }
+                            }
+                        }
                     }
                     {
                         let mut model_opts: Vec<(String, String)> = app_store.config.read().as_ref()

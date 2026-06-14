@@ -78,6 +78,10 @@ name = "services_embedder_test"
 path = "tests/services/embedder_test.rs"
 
 [[test]]
+name = "services_model_downloader_test"
+path = "tests/services/model_downloader_test.rs"
+
+[[test]]
 name = "services_intent_test"
 path = "tests/services/intent_test.rs"
 
@@ -116,6 +120,38 @@ path = "tests/utils/markdown_test.rs"
 [[test]]
 name = "utils_paths_test"
 path = "tests/utils/paths_test.rs"
+
+[[test]]
+name = "services_ai_openai_test"
+path = "tests/services/ai/openai_test.rs"
+
+[[test]]
+name = "services_ai_deepseek_test"
+path = "tests/services/ai/deepseek_test.rs"
+
+[[test]]
+name = "services_ai_ollama_provider_test"
+path = "tests/services/ai/ollama_provider_test.rs"
+
+[[test]]
+name = "services_ai_openai_compatible_test"
+path = "tests/services/ai/openai_compatible_test.rs"
+
+[[test]]
+name = "services_conversation_store_helpers_test"
+path = "tests/services/conversation_store_helpers_test.rs"
+
+[[test]]
+name = "services_vector_store_helpers_test"
+path = "tests/services/vector_store_helpers_test.rs"
+
+[[test]]
+name = "services_ollama_probe_test"
+path = "tests/services/ollama_probe_test.rs"
+
+[[test]]
+name = "services_ollama_embed_test"
+path = "tests/services/ollama_embed_test.rs"
 
 [dependencies]
 dioxus = { version = "0.7", features = ["desktop"] }
@@ -173,3 +209,119 @@ serial_test = "3"
 
 [build-dependencies]
 grass = "0.13"
+
+[[test]]
+name = "utils_datetime_test"
+path = "tests/utils/datetime_test.rs"
+
+[[test]]
+name = "services_embedder_manager_test"
+path = "tests/services/embedder_manager_test.rs"
+
+[[test]]
+name = "stores_search_test"
+path = "tests/stores/search_test.rs"
+
+[[test]]
+name = "platform_linux_test"
+path = "tests/platform/linux_test.rs"
+
+[[test]]
+name = "services_ai_streaming_helpers_test"
+path = "tests/services/ai/streaming_helpers_test.rs"
+
+[[test]]
+name = "stores_conversation_helpers_test"
+path = "tests/stores/conversation_helpers_test.rs"
+
+[[test]]
+name = "services_vector_store_lancedb_helpers_test"
+path = "tests/services/vector_store_lancedb_helpers_test.rs"
+
+[[test]]
+name = "components_conversation_item_helpers_test"
+path = "tests/components/conversation_item_helpers_test.rs"
+
+[[test]]
+name = "views_chat_input_helpers_test"
+path = "tests/views/chat_input_helpers_test.rs"
+
+[[test]]
+name = "utils_markdown_preprocess_test"
+path = "tests/utils/markdown_preprocess_test.rs"
+
+[[test]]
+name = "stores_conversation_upsert_test"
+path = "tests/stores/conversation_upsert_test.rs"
+
+[[test]]
+name = "services_conversation_helpers_test"
+path = "tests/services/conversation_helpers_test.rs"
+
+[[test]]
+name = "services_config_helpers_test"
+path = "tests/services/config_helpers_test.rs"
+
+[[test]]
+name = "services_conversation_store_migrate_test"
+path = "tests/services/conversation_store_migrate_test.rs"
+
+[[test]]
+name = "platform_linux_helpers_test"
+path = "tests/platform/linux_helpers_test.rs"
+
+[[test]]
+name = "platform_windows_helpers_test"
+path = "tests/platform/windows_helpers_test.rs"
+
+[[test]]
+name = "stores_conversation_pagination_test"
+path = "tests/stores/conversation_pagination_test.rs"
+
+[[test]]
+name = "components_input_helpers_test"
+path = "tests/components/input_helpers_test.rs"
+
+[[test]]
+name = "views_message_list_helpers_test"
+path = "tests/views/message_list_helpers_test.rs"
+
+[[test]]
+name = "services_ollama_probe_helpers_test"
+path = "tests/services/ollama_probe_helpers_test.rs"
+
+[[test]]
+name = "services_embedder_manager_helpers_test"
+path = "tests/services/embedder_manager_helpers_test.rs"
+
+[[test]]
+name = "services_conversation_store_migrate_helpers_test"
+path = "tests/services/conversation_store_migrate_helpers_test.rs"
+
+[[test]]
+name = "services_ai_streaming_chunk_test"
+path = "tests/services/ai/streaming_chunk_test.rs"
+
+[[test]]
+name = "services_vector_store_lancedb_index_test"
+path = "tests/services/vector_store_lancedb_index_test.rs"
+
+[[test]]
+name = "components_notification_helpers_test"
+path = "tests/components/notification_helpers_test.rs"
+
+[[test]]
+name = "views_header_helpers_test"
+path = "tests/views/header_helpers_test.rs"
+
+[[test]]
+name = "views_message_bubble_helpers_test"
+path = "tests/views/message_bubble_helpers_test.rs"
+
+[[test]]
+name = "services_ai_ollama_stream_helpers_test"
+path = "tests/services/ai/ollama_stream_helpers_test.rs"
+
+[[test]]
+name = "services_ai_openai_stream_helpers_test"
+path = "tests/services/ai/openai_stream_helpers_test.rs"

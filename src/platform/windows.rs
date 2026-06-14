@@ -47,26 +47,32 @@ pub fn app_config() -> Config {
 pub fn detect_system_theme() -> SystemTheme {
     use std::process::Command;
 
-    // 通过 reg query 读取注册表值
-    if let Ok(output) = Command::new("reg")
+    let output = Command::new("reg")
         .args([
             "query",
             r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
             "/v",
             "AppsUseLightTheme",
         ])
-        .output()
-    {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // 输出格式如：AppsUseLightTheme    REG_DWORD    0x1
-            if stdout.contains("0x1") {
-                return SystemTheme::Light;
-            } else if stdout.contains("0x0") {
-                return SystemTheme::Dark;
-            }
-        }
-    }
+        .output();
 
-    SystemTheme::Dark
+    parse_reg_theme_output(output)
+}
+
+/// 解析 reg query 命令输出，提取主题值。
+///
+/// 输出格式如：`AppsUseLightTheme    REG_DWORD    0x1`
+pub fn parse_reg_theme_output(output: Result<std::process::Output, std::io::Error>) -> SystemTheme {
+    let Ok(out) = output else { return SystemTheme::Dark };
+    if !out.status.success() {
+        return SystemTheme::Dark;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.contains("0x1") {
+        SystemTheme::Light
+    } else if stdout.contains("0x0") {
+        SystemTheme::Dark
+    } else {
+        SystemTheme::Dark
+    }
 }

@@ -19,6 +19,17 @@ impl ConfigService for FileConfigService {
     }
 }
 
+/// 读取并解析配置文件。
+///
+/// 配置文件存在时读取并解析，不存在或解析失败时返回 `None`。
+pub fn read_config_file(config_path: &std::path::Path) -> Option<XEChatConfig> {
+    if !config_path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(config_path).ok()?;
+    toml::from_str(&content).ok()
+}
+
 /// 从磁盘加载原始配置。
 ///
 /// 若配置文件存在，则读取并解析为 [`XEChatConfig`]；若不存在，
@@ -35,9 +46,7 @@ pub fn load_config_raw() -> Result<XEChatConfig, String> {
     paths::ensure_config_dir()?;
     let config_path = paths::get_config_path();
 
-    if config_path.exists() {
-        let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-        let config: XEChatConfig = toml::from_str(&content).map_err(|e| e.to_string())?;
+    if let Some(config) = read_config_file(&config_path) {
         Ok(config)
     } else {
         let default_config = XEChatConfig::default();

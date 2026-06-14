@@ -5,6 +5,7 @@ use crate::views::Layout;
 use crate::components::notification::Notification;
 use crate::components::modals::rename::RenameModal;
 use crate::components::modals::delete::DeleteModal;
+use crate::components::modals::rebuild::RebuildModal;
 
 /// 应用根组件
 ///
@@ -44,6 +45,7 @@ pub fn App() -> Element {
             Notification {}
             RenameModal {}
             DeleteModal {}
+            RebuildModal {}
         }
     }
 }

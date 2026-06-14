@@ -13,7 +13,7 @@ async fn open_store() -> (ConversationStore, tempfile::TempDir) {
     vs.ensure_table().await.unwrap();
     let vector_store: std::sync::Arc<dyn xechat::services::vector_store::VectorStore> = std::sync::Arc::new(vs);
 
-    let mut store = ConversationStore::open(path, vector_store)
+    let mut store = ConversationStore::open(path, Some(vector_store))
         .await
         .unwrap();
     store.ensure_table().await.unwrap();

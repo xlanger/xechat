@@ -395,95 +395,134 @@ fn cleanup_empty_math_delimiters(html: &str) -> String {
     result
 }
 
+/// 扫描行内公式的闭合 `$`，返回 `(闭合位置, 是否找到)`。
+///
+/// 从 `start + 1` 开始，跳过花括号分组，遇到未转义的 `\)` 或 `\]` 提前终止。
+pub fn scan_inline_closing(chars: &[char], start: usize) -> (usize, bool) {
+    let mut pos = start + 1;
+    let mut depth = 0;
+
+    while pos < chars.len() {
+        match chars[pos] {
+            '{' => { depth += 1; pos += 1; }
+            '}' => { if depth > 0 { depth -= 1; } pos += 1; }
+            '\\' => {
+                let saved = pos;
+                pos += 1;
+                if pos < chars.len() && (chars[pos] == ')' || chars[pos] == ']') {
+                    return (saved, false);
+                }
+                if pos < chars.len() { pos += 1; }
+            }
+            '$' if depth == 0 => return (pos, true),
+            '$' => { pos += 1; }
+            _ => { pos += 1; }
+        }
+    }
+    (pos, false)
+}
+
+/// 判断 LaTeX 内容是否可安全渲染（非空且不含 HTML 标签）。
+pub fn is_renderable_latex(content: &str) -> bool {
+    let trimmed = content.trim();
+    !trimmed.is_empty() && !trimmed.contains('<') && !trimmed.contains('>')
+}
+
+/// 处理单 `$...$` 行内公式：从 `start` 位置（`$` 所在位置）开始，
+/// 尝试找到匹配的闭合 `$`，成功则渲染 KaTeX，失败则原样输出。
+/// 返回 `(写入 result 的内容, 下一个待处理位置)`。
+fn process_inline_math(chars: &[char], start: usize) -> (String, usize) {
+    let (end_pos, found_end) = scan_inline_closing(chars, start);
+
+    if found_end {
+        let latex: String = chars[start + 1..end_pos].iter().collect();
+        if is_renderable_latex(&latex) {
+            let rendered = render_katex(latex.trim(), false);
+            (rendered, end_pos + 1)
+        } else {
+            let original: String = chars[start..=end_pos].iter().collect();
+            (original, end_pos + 1)
+        }
+    } else {
+        let original: String = chars[start..end_pos].iter().collect();
+        (original, end_pos)
+    }
+}
+
+/// 扫描 `$$` 闭合标记，返回 `(闭合位置, 是否找到)`。
+pub fn scan_display_closing(chars: &[char], start: usize) -> (usize, bool) {
+    let mut pos = start + 2;
+    while pos + 1 < chars.len() {
+        if chars[pos] == '$' && chars[pos + 1] == '$' {
+            return (pos, true);
+        }
+        pos += 1;
+    }
+    (pos, false)
+}
+
+/// 判断无闭合 `$$` 的尾部内容是否含有 LaTeX 特征字符。
+pub fn has_latex_features(content: &str) -> bool {
+    content.contains('\\') || content.contains('_') || content.contains('^')
+}
+
+/// 渲染已闭合的 display math 内容，返回 `(渲染结果, 下一个位置)`。
+fn render_closed_display(chars: &[char], start: usize, end_pos: usize) -> (String, usize) {
+    let raw_latex: String = chars[start + 2..end_pos].iter().collect();
+    let cleaned = strip_all_html_tags(&raw_latex);
+    let trimmed = cleaned.trim();
+    if !trimmed.is_empty() {
+        (render_katex(trimmed, true), end_pos + 2)
+    } else {
+        let original: String = chars[start..=end_pos + 1].iter().collect();
+        (original, end_pos + 2)
+    }
+}
+
+/// 渲染未闭合的 display math 尾部内容，返回 `(渲染结果, 下一个位置)`。
+fn render_unclosed_display(chars: &[char], start: usize) -> (String, usize) {
+    let raw_latex: String = chars[start + 2..].iter().collect();
+    let cleaned = strip_all_html_tags(&raw_latex);
+    let trimmed = cleaned.trim();
+    if !trimmed.is_empty() && has_latex_features(trimmed) {
+        (render_katex(trimmed, true), chars.len())
+    } else {
+        let original: String = chars[start..].iter().collect();
+        (original, chars.len())
+    }
+}
+
+/// 处理双 `$$...$$` 独占行公式：从 `start` 位置（第一个 `$` 所在位置）开始，
+/// 尝试找到匹配的闭合 `$$`，成功则渲染 KaTeX，失败则扫描到段落末尾。
+/// 返回 `(写入 result 的内容, 下一个待处理位置)`。
+fn process_display_math(chars: &[char], start: usize) -> (String, usize) {
+    let (end_pos, found_closing) = scan_display_closing(chars, start);
+
+    if found_closing {
+        render_closed_display(chars, start, end_pos)
+    } else {
+        render_unclosed_display(chars, start)
+    }
+}
+
 fn process_leftover_dollars(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let chars: Vec<char> = html.chars().collect();
     let mut pos = 0;
 
     while pos < chars.len() {
-        if chars[pos] == '$' && pos + 1 < chars.len() && chars[pos + 1] != '$' {
-            let start = pos;
-            pos += 1;
-
-            let mut depth = 0;
-            let mut found_end = false;
-            while pos < chars.len() {
-                match chars[pos] {
-                    '{' => { depth += 1; pos += 1; }
-                    '}' => { if depth > 0 { depth -= 1; } pos += 1; }
-                    '\\' => {
-                                let saved = pos;
-                                pos += 1;
-                                if pos < chars.len() && (chars[pos] == ')' || chars[pos] == ']') {
-                                    pos = saved;
-                                    break;
-                                }
-                                if pos < chars.len() { pos += 1; }
-                            }
-                    '$' if depth == 0 => { found_end = true; break; }
-                    '$' => { pos += 1; }
-                    _ => { pos += 1; }
-                }
-            }
-
-            if found_end {
-                let latex: String = chars[start + 1..pos].iter().collect();
-                let trimmed = latex.trim();
-                if !trimmed.is_empty() && !trimmed.contains('<') && !trimmed.contains('>') {
-                    let rendered = render_katex(trimmed, false);
-                    result.push_str(&rendered);
-                } else {
-                    for &c in &chars[start..=pos] { result.push(c); }
-                }
-                pos += 1;
-            } else {
-                for &c in &chars[start..pos] { result.push(c); }
-            }
-            continue;
-        }
-
         if chars[pos] == '$' && pos + 1 < chars.len() && chars[pos + 1] == '$' {
-            let start = pos;
-            pos += 2;
-            let mut found_closing = false;
-            let mut end_pos = pos;
-            while end_pos + 1 < chars.len() {
-                if chars[end_pos] == '$' && chars[end_pos + 1] == '$' {
-                    found_closing = true;
-                    break;
-                }
-                end_pos += 1;
-            }
-
-            if found_closing {
-                let raw_latex: String = chars[start + 2..end_pos].iter().collect();
-                let cleaned = strip_all_html_tags(&raw_latex);
-                let trimmed = cleaned.trim();
-                if !trimmed.is_empty() {
-                    let rendered = render_katex(trimmed, true);
-                    result.push_str(&rendered);
-                } else {
-                    for &c in &chars[start..=end_pos + 1] { result.push(c); }
-                }
-                pos = end_pos + 2;
-            } else {
-                // Scan to end of paragraph but this case should not happen often now
-                let raw_latex: String = chars[start + 2..].iter().collect();
-                let cleaned = strip_all_html_tags(&raw_latex);
-                let trimmed = cleaned.trim();
-                if !trimmed.is_empty() && (trimmed.contains('\\') || trimmed.contains('_') || trimmed.contains('^')) {
-                    let rendered = render_katex(trimmed, true);
-                    result.push_str(&rendered);
-                } else {
-                    for &c in &chars[start..] { result.push(c); }
-                }
-                pos = chars.len();
-            }
-            continue;
+            let (text, next) = process_display_math(&chars, pos);
+            result.push_str(&text);
+            pos = next;
+        } else if chars[pos] == '$' && (pos + 1 >= chars.len() || chars[pos + 1] != '$') {
+            let (text, next) = process_inline_math(&chars, pos);
+            result.push_str(&text);
+            pos = next;
+        } else {
+            result.push(chars[pos]);
+            pos += 1;
         }
-
-        result.push(chars[pos]);
-        pos += 1;
     }
 
     result
@@ -674,107 +713,28 @@ fn strip_all_html_tags(s: &str) -> String {
 ///
 /// **跳过代码块和行内代码**：代码块（```...```）和行内代码（`...`）中的
 /// `$`、`\[`、`\(` 等符号不进行数学公式处理，避免破坏代码内容。
-fn preprocess_math(input: &str) -> String {
+pub fn preprocess_math(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let chars: Vec<char> = input.chars().collect();
     let mut pos = 0;
 
     while pos < chars.len() {
-        // 跳过代码块（```...```）
-        if chars[pos] == '`' && pos + 2 < chars.len() && chars[pos + 1] == '`' && chars[pos + 2] == '`' {
-            // 找到闭合的 ```
-            let fence_end = find_closing_triple_backtick(&chars, pos + 3);
-            if let Some(end) = fence_end {
-                // 原样复制代码块
-                for &c in &chars[pos..end + 3] {
-                    result.push(c);
-                }
-                pos = end + 3;
-            } else {
-                // 未闭合的代码块（流式输出中），原样复制剩余内容
-                for &c in &chars[pos..] {
-                    result.push(c);
-                }
-                break;
-            }
+        if try_skip_triple_backtick(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-
-        // 跳过行内代码（`...`）
-        if chars[pos] == '`' {
-            let mut end = pos + 1;
-            while end < chars.len() && chars[end] != '`' {
-                end += 1;
-            }
-            if end < chars.len() {
-                // 找到闭合的 `，原样复制
-                for &c in &chars[pos..=end] {
-                    result.push(c);
-                }
-                pos = end + 1;
-            } else {
-                // 未闭合的行内代码，原样复制剩余
-                for &c in &chars[pos..] {
-                    result.push(c);
-                }
-                break;
-            }
+        if try_skip_inline_code(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-
-        if chars[pos] == '\\' && pos + 1 < chars.len() && chars[pos + 1] == '[' {
-            if let Some(end) = find_closing_pair(&chars, pos + 2, '\\', ']') {
-                let content = flatten_newlines(&chars[pos + 2..end]);
-                result.push_str("$$");
-                result.push_str(content.trim());
-                result.push_str("$$");
-                pos = end + 2;
-            } else {
-                result.push_str("\\[");
-                pos += 2;
-            }
+        if try_convert_bracket_display(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-
-        if chars[pos] == '\\' && pos + 1 < chars.len() && chars[pos + 1] == '(' {
-            if let Some(end) = find_closing_pair(&chars, pos + 2, '\\', ')') {
-                let content = flatten_newlines(&chars[pos + 2..end]);
-                result.push('$');
-                result.push_str(content.trim());
-                result.push('$');
-                pos = end + 2;
-            } else {
-                result.push_str("\\(");
-                pos += 2;
-            }
+        if try_convert_paren_inline(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-
-        if chars[pos] == '$' && pos + 1 < chars.len() && chars[pos + 1] == '$' {
-            if let Some(end) = find_closing_ddollar(&chars, pos + 2) {
-                let content = flatten_newlines(&chars[pos + 2..end]);
-                result.push_str("$$");
-                result.push_str(content.trim());
-                result.push_str("$$");
-                pos = end + 2;
-            } else {
-                result.push_str("$$");
-                pos += 2;
-            }
+        if try_convert_ddollar_display(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-
-        if chars[pos] == '$' && (pos + 1 >= chars.len() || chars[pos + 1] != '$') {
-            if let Some(end) = find_closing_dollar(&chars, pos + 1) {
-                let content = flatten_newlines(&chars[pos + 1..end]);
-                result.push('$');
-                result.push_str(content.trim());
-                result.push('$');
-                pos = end + 1;
-            } else {
-                result.push('$');
-                pos += 1;
-            }
+        if try_convert_dollar_inline(&chars, pos, &mut result, &mut pos) {
             continue;
         }
 
@@ -783,6 +743,164 @@ fn preprocess_math(input: &str) -> String {
     }
 
     result
+}
+
+/// 尝试跳过三反引号代码块（```...```）。
+///
+/// 成功跳过时返回 `true`，并将代码块原样写入 `result`，更新 `pos`。
+/// 未遇到三反引号时返回 `false`，不修改任何状态。
+#[inline]
+pub fn try_skip_triple_backtick(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '`' || pos + 2 >= chars.len() || chars[pos + 1] != '`' || chars[pos + 2] != '`' {
+        return false;
+    }
+    if let Some(end) = find_closing_triple_backtick(chars, pos + 3) {
+        for &c in &chars[pos..end + 3] {
+            result.push(c);
+        }
+        *next_pos = end + 3;
+    } else {
+        for &c in &chars[pos..] {
+            result.push(c);
+        }
+        *next_pos = chars.len();
+    }
+    true
+}
+
+/// 尝试跳过行内代码（`...`）。
+///
+/// 成功跳过时返回 `true`，并将行内代码原样写入 `result`，更新 `pos`。
+/// 当前位置不是反引号或未找到闭合时返回 `false`。
+#[inline]
+pub fn try_skip_inline_code(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '`' {
+        return false;
+    }
+    // 排除三反引号（由 try_skip_triple_backtick 处理）
+    if pos + 2 < chars.len() && chars[pos + 1] == '`' && chars[pos + 2] == '`' {
+        return false;
+    }
+    let mut end = pos + 1;
+    while end < chars.len() && chars[end] != '`' {
+        end += 1;
+    }
+    if end < chars.len() {
+        for &c in &chars[pos..=end] {
+            result.push(c);
+        }
+        *next_pos = end + 1;
+    } else {
+        for &c in &chars[pos..] {
+            result.push(c);
+        }
+        *next_pos = chars.len();
+    }
+    true
+}
+
+/// 尝试转换 `\[...\]` 为 `$$...$$`（独占行公式）。
+///
+/// 成功转换时返回 `true`，将内容展平换行后写入 `result`，更新 `pos`。
+/// 当前位置不是 `\[` 时返回 `false`。
+#[inline]
+pub fn try_convert_bracket_display(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '\\' || pos + 1 >= chars.len() || chars[pos + 1] != '[' {
+        return false;
+    }
+    if let Some(end) = find_closing_pair(chars, pos + 2, '\\', ']') {
+        let content = flatten_newlines(&chars[pos + 2..end]);
+        result.push_str("$$");
+        result.push_str(content.trim());
+        result.push_str("$$");
+        *next_pos = end + 2;
+    } else {
+        result.push_str("\\[");
+        *next_pos = pos + 2;
+    }
+    true
+}
+
+/// 尝试转换 `\(...\)` 为 `$...$`（行内公式）。
+///
+/// 成功转换时返回 `true`，将内容展平换行后写入 `result`，更新 `pos`。
+/// 当前位置不是 `\(` 时返回 `false`。
+#[inline]
+pub fn try_convert_paren_inline(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '\\' || pos + 1 >= chars.len() || chars[pos + 1] != '(' {
+        return false;
+    }
+    if let Some(end) = find_closing_pair(chars, pos + 2, '\\', ')') {
+        let content = flatten_newlines(&chars[pos + 2..end]);
+        result.push('$');
+        result.push_str(content.trim());
+        result.push('$');
+        *next_pos = end + 2;
+    } else {
+        result.push_str("\\(");
+        *next_pos = pos + 2;
+    }
+    true
+}
+
+/// 尝试转换 `$$...$$` 独占行公式。
+///
+/// 成功转换时返回 `true`，将内容展平换行后写入 `result`，更新 `pos`。
+/// 当前位置不是 `$$` 时返回 `false`。
+#[inline]
+pub fn try_convert_ddollar_display(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '$' || pos + 1 >= chars.len() || chars[pos + 1] != '$' {
+        return false;
+    }
+    if let Some(end) = find_closing_ddollar(chars, pos + 2) {
+        let content = flatten_newlines(&chars[pos + 2..end]);
+        result.push_str("$$");
+        result.push_str(content.trim());
+        result.push_str("$$");
+        *next_pos = end + 2;
+    } else {
+        result.push_str("$$");
+        *next_pos = pos + 2;
+    }
+    true
+}
+
+/// 尝试转换 `$...$` 行内公式。
+///
+/// 成功转换时返回 `true`，将内容展平换行后写入 `result`，更新 `pos`。
+/// 当前位置不是单个 `$`（非 `$$`）时返回 `false`。
+#[inline]
+pub fn try_convert_dollar_inline(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if chars[pos] != '$' {
+        return false;
+    }
+    // 排除 $$（由 try_convert_ddollar_display 处理）
+    if pos + 1 < chars.len() && chars[pos + 1] == '$' {
+        return false;
+    }
+    if let Some(end) = find_closing_dollar(chars, pos + 1) {
+        let content = flatten_newlines(&chars[pos + 1..end]);
+        result.push('$');
+        result.push_str(content.trim());
+        result.push('$');
+        *next_pos = end + 1;
+    } else {
+        result.push('$');
+        *next_pos = pos + 1;
+    }
+    true
 }
 
 fn find_closing_triple_backtick(chars: &[char], start: usize) -> Option<usize> {

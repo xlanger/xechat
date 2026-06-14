@@ -12,7 +12,13 @@ struct SelectOption {
 #[with_css(css, "styles/components/custom_select.scss")]
 /// 自定义下拉选择组件，支持选项列表展示和选中状态同步。
 #[component]
-pub fn CustomSelect(options: Vec<(String, String)>, value: String, on_select: EventHandler<String>) -> Element {
+pub fn CustomSelect(
+    options: Vec<(String, String)>,
+    value: String,
+    on_select: EventHandler<String>,
+    #[props(default = false)]
+    disabled: bool,
+) -> Element {
     let mut open = use_signal(|| false);
     let selected_label = options.iter()
         .find(|(k, _)| k == &value)
@@ -21,6 +27,9 @@ pub fn CustomSelect(options: Vec<(String, String)>, value: String, on_select: Ev
     let is_placeholder = value.is_empty();
 
     let toggle = move |e: MouseEvent| {
+        if disabled {
+            return;
+        }
         e.stop_propagation();
         let is = *open.read();
         open.set(!is);
@@ -36,7 +45,9 @@ pub fn CustomSelect(options: Vec<(String, String)>, value: String, on_select: Ev
 
     let is_open = *open.read();
 
-    let trigger_class = if is_open {
+    let trigger_class = if disabled {
+        format!("{} {}", css::select_trigger, css::select_trigger_disabled)
+    } else if is_open {
         format!("{} {}", css::select_trigger, css::select_trigger_open)
     } else if !is_placeholder {
         format!("{} {}", css::select_trigger, css::select_trigger_active)
@@ -61,7 +72,7 @@ pub fn CustomSelect(options: Vec<(String, String)>, value: String, on_select: Ev
     rsx! {
         div {
             class: "{css::select_wrapper}",
-            tabindex: "0",
+            tabindex: if disabled { "-1" } else { "0" },
             onfocusout: move |_| open.set(false),
             div {
                 class: "{trigger_class}",

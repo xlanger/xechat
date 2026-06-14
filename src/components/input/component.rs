@@ -15,6 +15,64 @@ pub enum InputType {
     Number,
 }
 
+/// 处理数字输入的 oninput 逻辑：过滤、截断、更新编辑值。
+///
+/// 返回 `(edit_value, last_valid_value, should_call_on_input)` 元组。
+#[inline]
+pub fn handle_number_input(
+    new_value: &str,
+    min: Option<f64>,
+    max: Option<f64>,
+) -> (String, Option<String>, bool) {
+    let filtered = filter_number_input(new_value);
+    let clamped = if is_valid_number(&filtered) {
+        clamp_number_value(&filtered, min, max)
+    } else {
+        filtered
+    };
+
+    let updated_valid = if is_valid_number(&clamped) {
+        Some(clamped.clone())
+    } else {
+        None
+    };
+
+    let should_call = !clamped.is_empty();
+    (clamped, updated_valid, should_call)
+}
+
+/// 处理数字输入的 blur 逻辑：回退、规范化、截断。
+///
+/// 返回最终的 `(edit_value, last_valid_value)` 元组，仅在值变化时返回 `Some`。
+#[inline]
+pub fn handle_number_blur(
+    current: &str,
+    last_valid: &str,
+    min: Option<f64>,
+    max: Option<f64>,
+) -> Option<(String, String)> {
+    let fallback = if current.is_empty() || !is_valid_number(current) {
+        last_valid.to_string()
+    } else {
+        current.to_string()
+    };
+
+    let normalized = normalize_number(&fallback);
+    let clamped = clamp_number_value(&normalized, min, max);
+
+    let final_value = if clamped.is_empty() {
+        min.map(|v| format!("{:.0}", v)).unwrap_or_else(|| "0".to_string())
+    } else {
+        clamped
+    };
+
+    if final_value != current {
+        Some((final_value.clone(), final_value))
+    } else {
+        None
+    }
+}
+
 #[with_css(css, "styles/components/input.scss")]
 /// 通用输入框组件。
 ///
@@ -93,24 +151,12 @@ pub fn Input(
                     let new_value = event.value();
 
                     if input_type == InputType::Number {
-                        // 过滤非法字符，只保留数字、小数点、负号
-                        let filtered = filter_number_input(&new_value);
-
-                        // 合法数字实时边界截断
-                        let clamped = if is_valid_number(&filtered) {
-                            clamp_number_value(&filtered, min, max)
-                        } else {
-                            filtered
-                        };
-
+                        let (clamped, updated_valid, should_call) = handle_number_input(&new_value, min, max);
                         edit_value.set(clamped.clone());
-
-                        // 合法数字才更新 last_valid_value
-                        if is_valid_number(&clamped) {
-                            last_valid_value.set(clamped.clone());
+                        if let Some(valid) = updated_valid {
+                            last_valid_value.set(valid);
                         }
-                        // 空字符串不触发 on_input
-                        if !clamped.is_empty() {
+                        if should_call {
                             on_input.call(clamped);
                         }
                     } else {
@@ -121,29 +167,11 @@ pub fn Input(
                 onfocusout: move |_| {
                     if input_type == InputType::Number {
                         let current = edit_value.read().clone();
-
-                        // 空字符串或非数字：回退到上一次合法值
-                        let fallback = if current.is_empty() || !is_valid_number(&current) {
-                            last_valid_value.read().clone()
-                        } else {
-                            current
-                        };
-
-                        // 去除末尾小数点，然后边界截断
-                        let normalized = normalize_number(&fallback);
-                        let clamped = clamp_number_value(&normalized, min, max);
-
-                        // 截断后为空（如 last_valid_value 也是空），则回退到 min 或 0
-                        let final_value = if clamped.is_empty() {
-                            min.map(|v| format!("{:.0}", v)).unwrap_or_else(|| "0".to_string())
-                        } else {
-                            clamped
-                        };
-
-                        if final_value != *edit_value.read() {
-                            edit_value.set(final_value.clone());
-                            last_valid_value.set(final_value.clone());
-                            on_input.call(final_value);
+                        let last = last_valid_value.read().clone();
+                        if let Some((new_edit, new_valid)) = handle_number_blur(&current, &last, min, max) {
+                            edit_value.set(new_edit.clone());
+                            last_valid_value.set(new_valid);
+                            on_input.call(new_edit);
                         }
                     }
                 },

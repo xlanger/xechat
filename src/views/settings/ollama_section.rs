@@ -9,6 +9,7 @@ use rust_i18n::t;
 use crate::hooks::use_app;
 use crate::components::input::Input;
 use crate::components::collapse::Collapse;
+use crate::components::tooltip::Tooltip;
 use crate::icons::{Icon, tabler};
 
 /// 探测状态枚举。
@@ -77,6 +78,13 @@ pub fn OllamaSection() -> Element {
                         label {
                             class: "{css::form_label}",
                             "{host_text}"
+                            Tooltip {
+                                text: t!("settings.ollama-host-hint").to_string(),
+                                span {
+                                    class: "embed-provider-hint-icon",
+                                    Icon { data: tabler::InfoCircle, size: "16" }
+                                }
+                            }
                         }
                         Input {
                             value: current_host,

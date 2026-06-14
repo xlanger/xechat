@@ -13,9 +13,80 @@ use crate::hooks::{use_conversation, use_app};
 use crate::state::MainRoute;
 use crate::icons::{Icon, tabler};
 
+/// 构建所有可用模型的单一选择列表。
+///
+/// 返回 (选项列表, 当前选中值)。
+pub fn build_model_options(config: &crate::XEChatConfig) -> (Vec<(String, String)>, String) {
+    let mut opts: Vec<(String, String)> = Vec::new();
+    for (pk, provider) in config.model_providers.iter() {
+        let is_compatible = !matches!(pk.as_str(), "deepseek" | "openai" | "ollama");
+        for model_name in provider.models.keys() {
+            let display = if is_compatible {
+                format!("{}（{}）", model_name, t!("settings.openai-compatible"))
+            } else {
+                model_name.clone()
+            };
+            let value = format!("{}/{}", pk, model_name);
+            opts.push((value, display));
+        }
+    }
+    let cur_val = format!("{}/{}", config.model_provider, config.model);
+    (opts, cur_val)
+}
+
+/// 判断是否应发送消息（内容非空且未在流式传输中）。
+#[inline]
+pub fn should_send(content: &str, is_streaming: bool) -> bool {
+    !content.trim().is_empty() && !is_streaming
+}
+
+/// 判断按键事件是否应触发发送（Enter 且无 Shift，且内容非空）。
+#[inline]
+pub fn is_send_key(evt: &KeyboardEvent, has_content: bool) -> bool {
+    evt.key() == Key::Enter && !evt.modifiers().shift() && has_content
+}
+
+/// 从 "provider/model" 格式的值中解析并更新配置。
+///
+/// 若格式正确，返回 `Some(())`；格式不匹配返回 `None`。
+#[inline]
+pub fn apply_model_selection(value: &str, config: &mut crate::XEChatConfig) -> Option<()> {
+    let (pk, model) = value.split_once('/')?;
+    config.model_provider = pk.to_string();
+    config.model = model.to_string();
+    Some(())
+}
+
 #[with_css(css, "styles/components/conversation.scss")]
 #[component]
 pub fn ChatInput() -> Element {
+    /// 计算发送按钮的 CSS 类名。
+    fn send_btn_class(is_streaming: bool, has_content: bool) -> dioxus_style::CssClass {
+        if is_streaming || has_content {
+            css::conv_send_btn + css::conv_send_btn_active
+        } else {
+            css::conv_send_btn + css::conv_send_btn_disabled
+        }
+    }
+
+    /// 计算模型触发器的 CSS 类名。
+    fn model_trigger_class(is_open: bool) -> dioxus_style::CssClass {
+        if is_open {
+            css::conv_model_trigger + css::conv_model_trigger_open
+        } else {
+            css::conv_model_trigger
+        }
+    }
+
+    /// 计算模型箭头的 CSS 类名。
+    fn model_arrow_class(is_open: bool) -> dioxus_style::CssClass {
+        if is_open {
+            css::conv_model_arrow + css::conv_model_arrow_open
+        } else {
+            css::conv_model_arrow
+        }
+    }
+
     let conv_store = use_conversation();
     let app_store = use_app();
     let _lang = *app_store.language.read();
@@ -26,35 +97,13 @@ pub fn ChatInput() -> Element {
     let is_streaming = conv_store.streaming();
 
     let has_content = !input_value.read().trim().is_empty();
-    let send_btn_class = if is_streaming {
-        css::conv_send_btn + css::conv_send_btn_active
-    } else if has_content {
-        css::conv_send_btn + css::conv_send_btn_active
-    } else {
-        css::conv_send_btn + css::conv_send_btn_disabled
-    };
+    let send_btn_class = send_btn_class(is_streaming, has_content);
 
     // 构建所有可用模型的单一选择列表："provider_key/model_name" → "模型名" 或 "模型名（OpenAI Compatible）"
     let (model_selector_options, current_selector_value) = {
         let config_guard = app_store.config.read();
         match config_guard.as_ref() {
-            Some(config) => {
-                let mut opts: Vec<(String, String)> = Vec::new();
-                for (pk, provider) in config.model_providers.iter() {
-                    let is_compatible = !matches!(pk.as_str(), "deepseek" | "openai" | "ollama");
-                    for model_name in provider.models.keys() {
-                        let display = if is_compatible {
-                            format!("{}（{}）", model_name, t!("settings.openai-compatible"))
-                        } else {
-                            model_name.clone()
-                        };
-                        let value = format!("{}/{}", pk, model_name);
-                        opts.push((value, display));
-                    }
-                }
-                let cur_val = format!("{}/{}", config.model_provider, config.model);
-                (opts, cur_val)
-            }
+            Some(config) => build_model_options(config),
             None => (Vec::new(), String::new()),
         }
     };
@@ -77,11 +126,8 @@ pub fn ChatInput() -> Element {
         let mut app_store = app_store.clone();
         let mut model_open = model_open;
         move |v: String| {
-            if let Some((pk, model)) = v.split_once('/') {
-                app_store.update_config(|config| {
-                    config.model_provider = pk.to_string();
-                    config.model = model.to_string();
-                });
+            if let Some(config) = app_store.config.write().as_mut() {
+                apply_model_selection(&v, config);
             }
             model_open.set(false);
         }
@@ -97,17 +143,8 @@ pub fn ChatInput() -> Element {
 
     let is_model_open = *model_open.read();
 
-    let model_trigger_class = if is_model_open {
-        format!("{} {}", css::conv_model_trigger, css::conv_model_trigger_open)
-    } else {
-        format!("{}", css::conv_model_trigger)
-    };
-
-    let model_arrow_class = if is_model_open {
-        format!("{} {}", css::conv_model_arrow, css::conv_model_arrow_open)
-    } else {
-        format!("{}", css::conv_model_arrow)
-    };
+    let m_trigger_class = model_trigger_class(is_model_open);
+    let m_arrow_class = model_arrow_class(is_model_open);
 
     // 发送消息的公共逻辑，用 Rc<RefCell> 共享于多个闭包
     let send_message: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new({
@@ -116,7 +153,7 @@ pub fn ChatInput() -> Element {
         let mut input_value = input_value;
         move || {
             let content = input_value.read().trim().to_string();
-            if content.is_empty() || conv_store.streaming() {
+            if !should_send(&content, conv_store.streaming()) {
                 return;
             }
             // 若无当前对话，先创建
@@ -139,7 +176,7 @@ pub fn ChatInput() -> Element {
     let on_keydown_send = {
         let send_message = send_message.clone();
         move |evt: KeyboardEvent| {
-            if evt.key() == Key::Enter && !evt.modifiers().shift() && !input_value.read().trim().is_empty() {
+            if is_send_key(&evt, !input_value.read().trim().is_empty()) {
                 evt.prevent_default();
                 (send_message.borrow_mut())();
             }
@@ -192,11 +229,11 @@ pub fn ChatInput() -> Element {
                             tabindex: "0",
                             onfocusout: move |_| model_open.set(false),
                             div {
-                                class: "{model_trigger_class}",
+                                class: "{m_trigger_class}",
                                 onclick: toggle_model_dropdown,
                                 span { class: "{css::conv_model_trigger_label}", "{selected_model_label}" }
                                 span {
-                                    class: "{model_arrow_class}",
+                                    class: "{m_arrow_class}",
                                     Icon { data: tabler::ChevronDown, size: "14", stroke: "currentColor" }
                                 }
                             }

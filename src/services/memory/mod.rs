@@ -2,8 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use once_cell::sync::OnceCell;
-
 use crate::Message;
 use crate::models::ai::ChatMessage;
 use crate::services::embedder::Embedder;
@@ -151,7 +149,10 @@ impl MemoryPipeline {
 
         // 编码轮次文本
         let char_count = turn_text.chars().count();
-        let chunks = if char_count < 150 {
+        let chunk_params = crate::services::embedder::ChunkParams::from_context_window(
+            self.embedder.context_window()
+        );
+        let chunks = if char_count < chunk_params.target_chars {
             // 短文本：整条编码
             let embedding = self.embedder.encode_passage(&turn_text).await?;
             vec![crate::models::memory::ChunkMeta {
@@ -163,7 +164,7 @@ impl MemoryPipeline {
             }]
         } else {
             // 长文本：语义分块编码
-            let spans = crate::services::embedder::manager::semantic_chunk(&turn_text);
+            let spans = crate::services::embedder::manager::semantic_chunk(&turn_text, chunk_params);
             let mut chunk_metas = Vec::with_capacity(spans.len());
             for (i, span) in spans.iter().enumerate() {
                 let embedding = self.embedder.encode_passage(&span.text).await?;
@@ -195,14 +196,14 @@ impl MemoryPipeline {
     }
 }
 
-static PIPELINE: OnceCell<MemoryPipeline> = OnceCell::new();
+static PIPELINE: std::sync::RwLock<Option<Arc<MemoryPipeline>>> = std::sync::RwLock::new(None);
 
 pub fn init_pipeline(pipeline: MemoryPipeline) -> anyhow::Result<()> {
-    PIPELINE
-        .set(pipeline)
-        .map_err(|_| anyhow::anyhow!("Pipeline already initialized"))
+    let mut guard = PIPELINE.write().map_err(|e| anyhow::anyhow!("Pipeline lock poisoned: {}", e))?;
+    *guard = Some(Arc::new(pipeline));
+    Ok(())
 }
 
-pub fn get_pipeline() -> Option<&'static MemoryPipeline> {
-    PIPELINE.get()
+pub fn get_pipeline() -> Option<Arc<MemoryPipeline>> {
+    PIPELINE.read().ok().and_then(|guard| guard.as_ref().cloned())
 }

@@ -65,6 +65,27 @@ pub fn Layout() -> Element {
         let _ = dioxus::desktop::window().webview.evaluate_script(GLOBAL_SHORTCUT_JS);
     });
 
+    // 启动时异步检测网络连通性
+    use_future(move || {
+        let mut store = app_store;
+        async move {
+            store.check_network().await;
+        }
+    });
+
+    // 启动心跳监测服务（仅首次挂载时执行）
+    use_effect(move || {
+        let network_sig = app_store.network_available;
+        let embedder_ready_sig = conv_store.embedder_ready;
+        let toast_sig = ui_store.active_toast;
+
+        crate::services::heartbeat::init(
+            network_sig,
+            embedder_ready_sig,
+            toast_sig,
+        );
+    });
+
     // Command+K / Ctrl+K 新建对话
     let new_chat = {
         let mut app_store = app_store.clone();
@@ -103,6 +124,28 @@ pub fn Layout() -> Element {
                         MainRoute::Search => rsx! { crate::views::search::SearchView {} },
                         MainRoute::Conversation(_) => rsx! { ConversationView {} },
                         MainRoute::Welcome => rsx! { Welcome {} },
+                    }
+                }
+            }
+            // 重建进度遮罩
+            if *conv_store.rebuild_in_progress.read() {
+                {
+                    let (current, total) = *conv_store.rebuild_progress.read();
+                    let msg = t!("rebuild.progress", current = current, total = total).to_string();
+                    rsx! {
+                        div {
+                            class: "{css::rebuild_overlay}",
+                            div {
+                                class: "{css::rebuild_dialog}",
+                                div {
+                                    class: "{css::rebuild_spinner}",
+                                }
+                                p {
+                                    class: "{css::rebuild_text}",
+                                    "{msg}"
+                                }
+                            }
+                        }
                     }
                 }
             }

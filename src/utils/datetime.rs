@@ -7,6 +7,29 @@
 use chrono::{DateTime, Utc, Local};
 use chrono_tz::Tz;
 
+/// 将格式别名解析为 chrono 格式字符串。
+pub fn resolve_format_pattern(fmt: &str) -> &str {
+    match fmt {
+        "date" => "%Y-%m-%d",
+        "datetime" => "%Y-%m-%d %H:%M",
+        "time" => "%H:%M",
+        "short" => "%m-%d %H:%M",
+        other => other,
+    }
+}
+
+/// 将 UTC 时间按用户偏好时区格式化输出。
+pub fn format_with_tz(dt: &DateTime<Utc>, pattern: &str, tz_pref: &str) -> String {
+    if tz_pref.is_empty() || tz_pref == "system" {
+        dt.with_timezone(&Local).format(pattern).to_string()
+    } else {
+        match tz_pref.parse::<Tz>() {
+            Ok(tz) => dt.with_timezone(&tz).format(pattern).to_string(),
+            Err(_) => dt.with_timezone(&Local).format(pattern).to_string(),
+        }
+    }
+}
+
 /// 将 UTC 时间转换为用户偏好时区并按指定格式输出。
 ///
 /// 格式规则：
@@ -16,22 +39,8 @@ use chrono_tz::Tz;
 /// - `short`：`%m-%d %H:%M`
 /// - 其他值直接作为 chrono 格式字符串使用
 pub fn format_datetime(dt: &DateTime<Utc>, fmt: &str, tz_pref: &str) -> String {
-    let pattern = match fmt {
-        "date" => "%Y-%m-%d",
-        "datetime" => "%Y-%m-%d %H:%M",
-        "time" => "%H:%M",
-        "short" => "%m-%d %H:%M",
-        other => other,
-    };
-
-    if tz_pref.is_empty() || tz_pref == "system" {
-        dt.with_timezone(&Local).format(pattern).to_string()
-    } else {
-        match tz_pref.parse::<Tz>() {
-            Ok(tz) => dt.with_timezone(&tz).format(pattern).to_string(),
-            Err(_) => dt.with_timezone(&Local).format(pattern).to_string(),
-        }
-    }
+    let pattern = resolve_format_pattern(fmt);
+    format_with_tz(dt, pattern, tz_pref)
 }
 
 /// 智能格式化消息时间：今天显示 `HH:MM`，否则显示 `YYYY-MM-DD HH:MM`。

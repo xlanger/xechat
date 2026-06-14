@@ -208,7 +208,7 @@ impl Default for OllamaPreferences {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PreferencesConfig {
-    /// 嵌入模型提供商：`"default"`（内置 E5）或 `"ollama"`
+    /// 嵌入模型提供商：`"default"`（内置 Qwen3-Embedding-0.6B）或 `"ollama"`
     #[serde(default)]
     pub embed_provider: String,
     /// Ollama 偏好配置

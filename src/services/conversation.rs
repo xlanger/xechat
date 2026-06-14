@@ -84,6 +84,51 @@ impl ConversationService for FileConversationService {
     }
 }
 
+/// 从磁盘读取并解析对话文件。
+///
+/// 文件存在时返回 `Ok(Some(Conversation))`，文件不存在返回 `Ok(None)`，
+/// 读取或解析失败时返回 `Err`。
+pub fn read_conversation_from_file(file_path: &std::path::Path) -> Result<Option<Conversation>, String> {
+    if !file_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Failed to read conversation: {}", e))?;
+    let conv = serde_json::from_str::<Conversation>(&content)
+        .map_err(|e| format!("Failed to parse conversation: {}", e))?;
+    Ok(Some(conv))
+}
+
+/// 读取对话文件，失败时返回带默认值的对话。
+///
+/// 文件存在且解析成功时返回解析结果，否则返回包含 id 和 title 的默认对话。
+pub fn read_conversation_or_default(id: &str, title: &str) -> Conversation {
+    let file_path = paths::get_conversation_file(id);
+    if let Ok(Some(conv)) = read_conversation_from_file(&file_path) {
+        return conv;
+    }
+    Conversation {
+        id: id.to_string(),
+        title: title.to_string(),
+        messages: Vec::new(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        is_temporary: false,
+    }
+}
+
+/// 读取对话文件并反序列化为可变 Conversation。
+///
+/// 文件不存在时返回 `Err("Conversation not found")`。
+pub fn load_conversation_mut(conv_id: &str) -> Result<Conversation, String> {
+    let file_path = paths::get_conversation_file(conv_id);
+    match read_conversation_from_file(&file_path) {
+        Ok(Some(conv)) => Ok(conv),
+        Ok(None) => Err("Conversation not found".into()),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn write_file(path: &PathBuf, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
@@ -206,24 +251,7 @@ pub fn load_conversation_list() -> Result<Vec<Conversation>, String> {
     let mut conversations = Vec::new();
 
     for (id, _title) in &index {
-        let file_path = paths::get_conversation_file(id);
-        if file_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
-                if let Ok(conv) = serde_json::from_str::<Conversation>(&content) {
-                    conversations.push(conv);
-                    continue;
-                }
-            }
-        }
-
-        conversations.push(Conversation {
-            id: id.clone(),
-            title: _title.clone(),
-            messages: Vec::new(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            is_temporary: false,
-        });
+        conversations.push(read_conversation_or_default(id, _title));
     }
 
     conversations.sort_by_key(|c| Reverse(c.updated_at));
@@ -336,15 +364,7 @@ pub fn create_conversation(title: &str) -> Result<Conversation, String> {
 ///
 /// 对话不存在、文件读取/解析/写入失败时返回错误描述字符串。
 pub fn add_message_to_conversation(conv_id: &str, message: &Message) -> Result<(), String> {
-    let file_path = paths::get_conversation_file(conv_id);
-    let mut conversation: Conversation = if file_path.exists() {
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("Failed to read conversation: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse conversation: {}", e))?
-    } else {
-        return Err("Conversation not found".into());
-    };
+    let mut conversation = load_conversation_mut(conv_id)?;
 
     conversation.messages.push(message.clone());
     conversation.updated_at = chrono::Utc::now();
@@ -367,15 +387,7 @@ pub fn add_message_to_conversation(conv_id: &str, message: &Message) -> Result<(
 /// 对话文件不存在、读取/解析/写入失败时返回错误描述字符串。
 /// 若未找到匹配的消息 ID 则静默跳过（不报错）。
 pub fn update_message_content(conv_id: &str, msg_id: &str, new_content: &str) -> Result<(), String> {
-    let file_path = paths::get_conversation_file(conv_id);
-    let mut conversation: Conversation = if file_path.exists() {
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("Failed to read conversation: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse conversation: {}", e))?
-    } else {
-        return Err("Conversation not found".into());
-    };
+    let mut conversation = load_conversation_mut(conv_id)?;
 
     if let Some(msg) = conversation.messages.iter_mut().find(|m| m.id == msg_id) {
         msg.content = new_content.to_string();
@@ -396,15 +408,7 @@ pub fn update_message_content(conv_id: &str, msg_id: &str, new_content: &str) ->
 ///
 /// 对话不存在、文件读取/解析/写入失败时返回错误描述字符串。
 pub fn rename_conversation(conv_id: &str, new_title: &str) -> Result<(), String> {
-    let file_path = paths::get_conversation_file(conv_id);
-    let mut conversation: Conversation = if file_path.exists() {
-        let content = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("Failed to read conversation: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse conversation: {}", e))?
-    } else {
-        return Err("Conversation not found".into());
-    };
+    let mut conversation = load_conversation_mut(conv_id)?;
 
     conversation.title = new_title.to_string();
     conversation.updated_at = chrono::Utc::now();
@@ -470,15 +474,7 @@ pub fn conversation_exists(conv_id: &str) -> bool {
 /// 对话不存在、文件读取/解析/写入失败时返回错误描述字符串。
 /// 若消息列表为空则静默跳过。
 pub fn update_last_message(conv_id: &str, content: &str, status: crate::MessageStatus) -> Result<(), String> {
-    let file_path = paths::get_conversation_file(conv_id);
-    let mut conversation: Conversation = if file_path.exists() {
-        let content_str = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("Failed to read conversation: {}", e))?;
-        serde_json::from_str(&content_str)
-            .map_err(|e| format!("Failed to parse conversation: {}", e))?
-    } else {
-        return Err("Conversation not found".into());
-    };
+    let mut conversation = load_conversation_mut(conv_id)?;
 
     if let Some(msg) = conversation.messages.last_mut() {
         msg.content = content.to_string();
@@ -501,15 +497,7 @@ pub fn update_last_message(conv_id: &str, content: &str, status: crate::MessageS
 ///
 /// 对话不存在、文件读取/解析/写入失败时返回错误描述字符串。
 pub fn remove_last_message(conv_id: &str) -> Result<(), String> {
-    let file_path = paths::get_conversation_file(conv_id);
-    let mut conversation: Conversation = if file_path.exists() {
-        let content_str = std::fs::read_to_string(&file_path)
-            .map_err(|e| format!("Failed to read conversation: {}", e))?;
-        serde_json::from_str(&content_str)
-            .map_err(|e| format!("Failed to parse conversation: {}", e))?
-    } else {
-        return Err("Conversation not found".into());
-    };
+    let mut conversation = load_conversation_mut(conv_id)?;
 
     conversation.messages.pop();
     conversation.updated_at = chrono::Utc::now();

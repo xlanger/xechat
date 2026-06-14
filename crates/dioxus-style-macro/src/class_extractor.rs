@@ -82,6 +82,127 @@ fn parse_rules(css: &str) -> Vec<String> {
 }
 
 #[inline]
+fn extract_class_component(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    results: &mut Vec<SelectorInfo>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let mut name = String::with_capacity(16);
+    while let Some(&next) = chars.peek() {
+        if next.is_alphanumeric() || next == '-' || next == '_' {
+            name.push(next);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if !name.is_empty() {
+        let rust_name = name.replace('-', "_");
+        if seen.insert(rust_name.clone()) {
+            results.push(SelectorInfo::Class(rust_name));
+        }
+    }
+}
+
+#[inline]
+fn extract_id_component(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    results: &mut Vec<SelectorInfo>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let mut name = String::with_capacity(16);
+    while let Some(&next) = chars.peek() {
+        if next.is_alphanumeric() || next == '-' || next == '_' {
+            name.push(next);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if !name.is_empty() {
+        let rust_name = name.replace('-', "_");
+        if seen.insert(rust_name.clone()) {
+            results.push(SelectorInfo::Id(rust_name));
+        }
+    }
+}
+
+#[inline]
+fn extract_pseudo_component(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    results: &mut Vec<SelectorInfo>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if chars.peek() == Some(&':') {
+        chars.next();
+    }
+    let mut name = String::with_capacity(16);
+    while let Some(&next) = chars.peek() {
+        if next.is_alphanumeric() || next == '-' {
+            name.push(next);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if chars.peek() == Some(&'(') {
+        chars.next();
+        let mut depth = 1;
+        let mut inner = String::new();
+        while let Some(c) = chars.next() {
+            match c {
+                '(' => {
+                    depth += 1;
+                    inner.push(c);
+                }
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                    inner.push(c);
+                }
+                _ => inner.push(c),
+            }
+        }
+        extract_from_selector(&inner, results, seen);
+    }
+}
+
+#[inline]
+fn extract_attribute_component(chars: &mut std::iter::Peekable<std::str::Chars>) {
+    while let Some(c) = chars.next() {
+        if c == ']' {
+            break;
+        }
+    }
+}
+
+#[inline]
+fn extract_element_component(
+    first_ch: char,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    results: &mut Vec<SelectorInfo>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    let mut name = String::from(first_ch);
+    while let Some(&next) = chars.peek() {
+        if next.is_alphanumeric() || next == '-' {
+            name.push(next);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    if name != "root" && name != "host" {
+        let rust_name = name.replace('-', "_");
+        if seen.insert(rust_name.clone()) {
+            results.push(SelectorInfo::Element(rust_name));
+        }
+    }
+}
+
+#[inline]
 fn extract_from_selector(
     selector: &str,
     results: &mut Vec<SelectorInfo>,
@@ -93,108 +214,29 @@ fn extract_from_selector(
     while let Some(ch) = chars.next() {
         match ch {
             '.' => {
-                let mut name = String::with_capacity(16);
-                while let Some(&next) = chars.peek() {
-                    if next.is_alphanumeric() || next == '-' || next == '_' {
-                        name.push(next);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if !name.is_empty() {
-                    let rust_name = name.replace('-', "_");
-                    if seen.insert(rust_name.clone()) {
-                        results.push(SelectorInfo::Class(rust_name));
-                    }
-                }
+                extract_class_component(&mut chars, results, seen);
                 at_start = false;
             }
             '#' => {
-                let mut name = String::with_capacity(16);
-                while let Some(&next) = chars.peek() {
-                    if next.is_alphanumeric() || next == '-' || next == '_' {
-                        name.push(next);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if !name.is_empty() {
-                    let rust_name = name.replace('-', "_");
-                    if seen.insert(rust_name.clone()) {
-                        results.push(SelectorInfo::Id(rust_name));
-                    }
-                }
+                extract_id_component(&mut chars, results, seen);
                 at_start = false;
             }
             ':' => {
-                let mut name = String::with_capacity(16);
-                if chars.peek() == Some(&':') {
-                    chars.next();
-                }
-                while let Some(&next) = chars.peek() {
-                    if next.is_alphanumeric() || next == '-' {
-                        name.push(next);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if chars.peek() == Some(&'(') {
-                    chars.next();
-                    let mut depth = 1;
-                    let mut inner = String::new();
-                    while let Some(c) = chars.next() {
-                        match c {
-                            '(' => {
-                                depth += 1;
-                                inner.push(c);
-                            }
-                            ')' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    break;
-                                }
-                                inner.push(c);
-                            }
-                            _ => inner.push(c),
-                        }
-                    }
-                    extract_from_selector(&inner, results, seen);
-                }
+                extract_pseudo_component(&mut chars, results, seen);
                 at_start = false;
             }
             ' ' | '>' | '+' | '~' => {
                 at_start = true;
             }
             '[' => {
-                while let Some(c) = chars.next() {
-                    if c == ']' {
-                        break;
-                    }
-                }
+                extract_attribute_component(&mut chars);
                 at_start = false;
             }
             '*' => {
                 at_start = false;
             }
             ch if ch.is_alphabetic() && at_start => {
-                let mut name = String::from(ch);
-                while let Some(&next) = chars.peek() {
-                    if next.is_alphanumeric() || next == '-' {
-                        name.push(next);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if name != "root" && name != "host" {
-                    let rust_name = name.replace('-', "_");
-                    if seen.insert(rust_name.clone()) {
-                        results.push(SelectorInfo::Element(rust_name));
-                    }
-                }
+                extract_element_component(ch, &mut chars, results, seen);
                 at_start = false;
             }
             _ => {

@@ -8,7 +8,7 @@ pub mod streaming;
 pub mod providers;
 
 pub use providers::*;
-pub use streaming::{parse_sse_stream, compress_messages, estimate_tokens, extract_error_from_body};
+pub use streaming::{parse_sse_stream, compress_messages, estimate_tokens, extract_error_from_body, extract_data_field, is_sse_metadata_or_empty, handle_sse_data};
 
 use crate::models::ai::{SendMessageParams, StreamEvent, AiProvider};
 use reqwest::Client;

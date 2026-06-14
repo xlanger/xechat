@@ -5,7 +5,9 @@
 //! 本模块属于 hooks 层，桥接 `crate::stores::ConversationStore` 与 Dioxus Context。
 
 use dioxus::prelude::*;
+use rust_i18n::t;
 use crate::stores::ConversationStore;
+use crate::stores::ui::ToastKind;
 
 /// 从 Dioxus Context 获取当前 [`ConversationStore`] 实例。
 ///
@@ -34,6 +36,14 @@ pub fn use_conversation_provider() -> ConversationStore {
         let mut provider_store = provider_store.clone();
         spawn(async move {
             provider_store.init_backend().await;
+
+            // 维度变更导致 turns 表重建时，显示 toast 提醒
+            if provider_store.turns_rebuilt.read().clone() {
+                let mut ui_store = crate::hooks::use_ui();
+                let msg = t!("toast.turns-rebuilt").to_string();
+                ui_store.show_toast(ToastKind::Info, msg, 5000);
+                provider_store.turns_rebuilt.set(false);
+            }
         });
     });
 

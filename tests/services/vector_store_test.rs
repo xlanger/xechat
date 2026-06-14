@@ -19,6 +19,9 @@ impl VectorStore for DummyStore {
     async fn delete_by_assistant_message(&self, _msg_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[test]
