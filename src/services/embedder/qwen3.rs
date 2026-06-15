@@ -128,15 +128,23 @@ fn build_model_config(model_path: &PathBuf) -> anyhow::Result<ModelConfig> {
         .with_model_path(model_path.to_str().unwrap_or_default())
         .with_model_name("qwen3-embedding")
         .with_normalization_mode(NormalizationMode::L2)
-        .with_pooling_strategy(PoolingStrategy::Mean)
+        .with_pooling_strategy(PoolingStrategy::Last)
         .build()
         .map_err(|e| anyhow::anyhow!("Build model config failed: {}", e))
 }
 
 /// 构建引擎配置并创建嵌入引擎。
 fn create_engine(model_config: ModelConfig) -> anyhow::Result<(EmbeddingEngine, usize)> {
+    // Decoder 模式默认 n_batch=2048, n_seq_max=2 → effective_max=1022
+    // 需要显式配置以支持更长输入：
+    //   - n_seq_max=1: 嵌入只需单序列（decoder 默认 2 会将上下文减半）
+    //   - n_batch=8192: 增大可用上下文窗口
+    //   - n_ubatch=512: 必须显式设置，否则 embellama 自动推导为 n_batch 同值导致内存溢出
     let engine_config = EngineConfig::builder()
         .with_model_config(model_config)
+        .with_n_batch(8192)
+        .with_n_seq_max(1)
+        .with_n_ubatch(512)
         .build()
         .map_err(|e| anyhow::anyhow!("Build engine config failed: {}", e))?;
 

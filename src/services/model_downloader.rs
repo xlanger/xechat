@@ -25,7 +25,11 @@ struct DownloadSource {
 const DOWNLOAD_SOURCES: &[DownloadSource] = &[
     DownloadSource {
         name: "github",
-        url: "https://github.com/xlanger/xechat/releases/download/models/qwen3-embedding.0.6b",
+        url: "https://github.com/xlanger/xechat/releases/download/models/qwen3-embedding-0.6b-q8_0.gguf",
+    },
+    DownloadSource {
+        name: "ghproxy",
+        url: "https://ghfast.top/https://github.com/xlanger/xechat/releases/download/models/qwen3-embedding-0.6b-q8_0.gguf",
     },
 ];
 
@@ -154,7 +158,7 @@ async fn send_download_request(
     if start_from > 0 {
         request = request.header("Range", format!("bytes={}-", start_from));
     }
-    request.send().await.context("Failed to send download request")
+    request.send().await.with_context(|| format!("Failed to send download request to {}", url))
 }
 
 /// 从 Content-Range 响应头中解析文件总大小。

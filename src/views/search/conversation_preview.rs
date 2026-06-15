@@ -49,7 +49,15 @@ pub fn ConversationPreview() -> Element {
                     store.load_conversation_content_anchored(&cid, msg_id).await;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     let script = format!(
-                        "var el=document.querySelector('[data-message-id=\"{}\"]');if(el){{el.scrollIntoView({{behavior:'smooth',block:'start'}});}}",
+                        "(function(){{\
+                            var el=document.querySelector('[data-message-id=\"{}\"]');\
+                            var c=document.querySelector('[data-preview-messages]');\
+                            if(el&&c){{\
+                                var r=el.getBoundingClientRect();\
+                                var cr=c.getBoundingClientRect();\
+                                c.scrollTop+=r.top-cr.top;\
+                            }}\
+                        }})()",
                         msg_id
                     );
                     let _ = dioxus::desktop::window().webview.evaluate_script(&script);

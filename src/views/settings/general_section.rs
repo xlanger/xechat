@@ -60,6 +60,7 @@ fn timezone_options() -> Vec<(String, String)> {
 pub fn GeneralSection() -> Element {
     let mut app_store = use_app();
     let mut ui_store = crate::hooks::use_ui();
+    let mut conv_store = crate::hooks::use_conversation();
 
     // Ollama 探测结果缓存
     let mut ollama_models: Signal<Vec<String>> = use_signal(Vec::new);
@@ -181,6 +182,7 @@ pub fn GeneralSection() -> Element {
     // 切换嵌入提供商时触发 Ollama 探测
     let on_select_embed_provider = {
         let mut ollama_embed_models = ollama_embed_models;
+        let mut conv_for_provider = conv_store.clone();
         move |v: String| {
             let is_ollama = v == "ollama";
             app_store.update_config(|config| {
@@ -202,16 +204,19 @@ pub fn GeneralSection() -> Element {
             } else {
                 ollama_embed_models.set(Vec::new());
             }
-            // 重新初始化嵌入器，触发变更检测和 turns 表重建
-            let mut ui = ui_store.clone();
-            spawn(async move {
-                let mut conv = crate::hooks::use_conversation();
-                let rebuilt = conv.reinit_embedder().await;
-                if rebuilt {
-                    let msg = t!("toast.turns-rebuilt").to_string();
-                    ui.show_toast(crate::stores::ui::ToastKind::Info, msg, 5000);
-                }
-            });
+            // 仅在切换回内置模式时重建（切换到 ollama 时 embed_model 尚为空，
+            // 应等用户选完模型后由 on_select_embed_model 触发 reinit_embedder）
+            if !is_ollama {
+                let mut ui = ui_store.clone();
+                let mut conv = conv_for_provider.clone();
+                spawn(async move {
+                    let rebuilt = conv.reinit_embedder().await;
+                    if rebuilt {
+                        let msg = t!("toast.turns-rebuilt").to_string();
+                        ui.show_toast(crate::stores::ui::ToastKind::Info, msg, 5000);
+                    }
+                });
+            }
         }
     };
 
@@ -336,6 +341,9 @@ pub fn GeneralSection() -> Element {
                                 .unwrap_or_default()
                         };
                         rsx! {
+                            {
+                                let mut conv_for_model = conv_store.clone();
+                                rsx! {
                             CustomSelect {
                                 options: embed_model_opts,
                                 value: current_embed_model,
@@ -346,8 +354,8 @@ pub fn GeneralSection() -> Element {
                                     });
                                     // ollama 嵌入模型变更时也触发重建
                                     let mut ui = ui_store.clone();
+                                    let mut conv = conv_for_model.clone();
                                     spawn(async move {
-                                        let mut conv = crate::hooks::use_conversation();
                                         let rebuilt = conv.reinit_embedder().await;
                                         if rebuilt {
                                             let msg = t!("toast.turns-rebuilt").to_string();
@@ -355,6 +363,8 @@ pub fn GeneralSection() -> Element {
                                         }
                                     });
                                 },
+                            }
+                                }
                             }
                         }
                     }
@@ -426,6 +436,7 @@ pub fn GeneralSection() -> Element {
                                         let mut model_progress_percent = model_progress_percent;
                                         let model_ready = model_ready;
                                         let mut model_error = model_error;
+                                        let conv_for_download = conv_store.clone();
                                         move |_| {
                                             model_downloading.set(true);
                                             model_error.set(String::new());
@@ -437,6 +448,7 @@ pub fn GeneralSection() -> Element {
                                             let mut mr = model_ready;
                                             let mut md = model_downloading;
                                             let mut me = model_error;
+                                            let mut conv_for_dl = conv_for_download.clone();
                                             spawn(async move {
                                                 while let Some(p) = rx.recv().await {
                                                     match p {
@@ -453,6 +465,11 @@ pub fn GeneralSection() -> Element {
                                                             mr.set(true);
                                                             md.set(false);
                                                             mpp.set(100);
+                                                            // 下载完成后立即加载嵌入模型
+                                                            let mut conv = conv_for_dl.clone();
+                                                            spawn(async move {
+                                                                conv.reinit_embedder().await;
+                                                            });
                                                             break;
                                                         }
                                                         crate::services::model_downloader::DownloadProgress::Failed(msg) => {

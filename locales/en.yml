@@ -200,6 +200,6 @@ settings:
   embed-model-downloading: "Downloading... %{percent}%"
   embed-model-download: "Download Model"
   embed-model-download-failed: "Download Failed"
-  embed-model-size: "~530MB"
+  embed-model-size: "~630MB"
   rebuild_vectors: "Rebuild Vectors"
   rebuild_vectors_hint: "Re-encode all conversation turns with the current embedding model"

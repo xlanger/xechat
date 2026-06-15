@@ -246,6 +246,15 @@ pub fn should_enable_ollama(config: &crate::models::config::XEChatConfig) -> boo
     config.preferences.embed_provider == "ollama" && !config.preferences.ollama.embed_model.is_empty()
 }
 
+/// 用户选择了 ollama 作为嵌入提供商（无论是否已配置具体模型）。
+///
+/// 用于区分"用户明确选择 ollama"与"使用默认内置模式"，防止在 ollama 模式下
+/// 因 embed_model 尚未配置而静默 fallback 到内置 Qwen3 模型导致向量重建。
+#[inline]
+pub fn is_ollama_provider_selected(config: &crate::models::config::XEChatConfig) -> bool {
+    config.preferences.embed_provider == "ollama"
+}
+
 // ── ConversationStore 实现 ────────────────────────────────────────
 
 impl ConversationStore {
@@ -578,7 +587,7 @@ impl ConversationStore {
         // 启动时如有待重嵌入数据，异步执行
         if let Some(turns) = raw_turns {
             eprintln!("[xechat] init_backend: {} raw turns to re-embed", turns.len());
-            self.spawn_reembed_task(turns);
+            self.spawn_reembed_task(turns, false);
         }
     }
 
@@ -614,7 +623,7 @@ impl ConversationStore {
         match raw_turns {
             Some(turns) => {
                 eprintln!("[xechat] reinit_embedder: {} raw turns to re-embed", turns.len());
-                self.spawn_reembed_task(turns);
+                self.spawn_reembed_task(turns, true);
             }
             None => {
                 eprintln!("[xechat] reinit_embedder: no raw turns to re-embed");
@@ -628,7 +637,7 @@ impl ConversationStore {
     ///
     /// 显示重建进度遮罩，逐条用新 embedder 重新分块和嵌入，
     /// 完成后关闭遮罩并显示成功提示。
-    fn spawn_reembed_task(&mut self, raw_turns: Vec<crate::services::vector_store::lancedb_store::RawTurn>) {
+    fn spawn_reembed_task(&mut self, raw_turns: Vec<crate::services::vector_store::lancedb_store::RawTurn>, force_rebuild: bool) {
         let total = raw_turns.len();
         eprintln!("[xechat] spawn_reembed_task: {} raw turns from turns table", total);
 
@@ -727,7 +736,7 @@ impl ConversationStore {
             let tx_progress = tx.clone();
             let result = vs.reembed_turns(raw_turns, &embedder, &|current, total| {
                 let _ = tx_progress.try_send(ReembedEvent::Progress(current, total));
-            }).await;
+            }, force_rebuild).await;
 
             let _ = tx.send(ReembedEvent::Done).await;
 
@@ -902,9 +911,8 @@ impl ConversationStore {
             return;
         }
 
-        // 复用 spawn_reembed_task 执行实际的增量重建
-        // （它内部会 open LanceDbStore → ensure_table → reembed_turns → get_existing_turn_ids 跳过已存在）
-        self.spawn_reembed_task(raw_turns);
+        // 复用 spawn_reembed_task 执行实际的强制重建
+        self.spawn_reembed_task(raw_turns, true);
     }
 
     /// 初始化记忆管线（需要 embedder + vector_store 同时就绪）。
@@ -951,7 +959,18 @@ impl ConversationStore {
             return false;
         }
 
-        // 优先级 2：内置 Qwen3-Embedding-0.6B
+        // [加固] 用户选择了 ollama 但尚未配置具体模型 → 不 fallback 到内置模型
+        // 场景：用户选了 ollama provider 但还没选 model 就关闭了应用
+        if is_ollama_provider_selected(config) {
+            eprintln!(
+                "[xechat] Ollama selected as embed provider but no model configured yet, \
+                 skipping init (will retry after user selects a model)"
+            );
+            self.embedder_ready.set(false);
+            return false;
+        }
+
+        // 优先级 2：内置 Qwen3-Embedding-0.6B（仅在非 ollama 模式下）
         match tokio::task::spawn_blocking(crate::services::embedder::qwen3::Qwen3Embedder::new).await {
             Ok(Ok(qwen3)) => {
                 eprintln!("[xechat] Qwen3-Embedding-0.6B ready (dim={})", qwen3.dimension());

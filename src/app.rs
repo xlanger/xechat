@@ -17,8 +17,8 @@ use crate::components::modals::rebuild::RebuildModal;
 #[component]
 pub fn App() -> Element {
     let app_store = use_app_provider();
-    let _conversation_store = use_conversation_provider();
     let _ui_store = use_ui_provider();
+    let _conversation_store = use_conversation_provider();
     use_search_provider();
 
     let theme_attr = {

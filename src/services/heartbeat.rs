@@ -206,6 +206,9 @@ async fn check_embedder_ready() -> bool {
             &config.preferences.ollama.host,
         );
         crate::services::ollama::probe::probe_host(&host).await
+    } else if crate::stores::conversation::is_ollama_provider_selected(&config) {
+        // [加固] ollama provider 已选但 model 尚未配置 → 不就绪
+        false
     } else {
         // 内置模式：检查模型文件是否存在
         crate::services::model_downloader::is_model_ready()

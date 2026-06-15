@@ -171,7 +171,11 @@ impl OllamaEmbedder {
             .post(format!("{}/api/embed", self.base_url))
             .json(&serde_json::json!({
                 "model": self.model,
-                "input": texts
+                "input": texts,
+                "options": {
+                    "num_ctx": self.context_window,
+                    "num_batch": self.context_window,
+                }
             }))
             .send()
             .await?;

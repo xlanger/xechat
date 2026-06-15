@@ -200,6 +200,6 @@ settings:
   embed-model-downloading: "下载中... %{percent}%"
   embed-model-download: 下载模型
   embed-model-download-failed: 下载失败
-  embed-model-size: "约 530MB"
+  embed-model-size: "约 630MB"
   rebuild_vectors: 重建向量
   rebuild_vectors_hint: "使用当前嵌入模型重新编码所有对话轮次"

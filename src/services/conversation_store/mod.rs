@@ -1175,6 +1175,7 @@ impl ConversationStore {
         raw_turns: Vec<crate::services::vector_store::lancedb_store::RawTurn>,
         embedder: &Arc<dyn crate::services::embedder::Embedder>,
         on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+        force_rebuild: bool,
     ) -> anyhow::Result<(usize, usize)> {
         let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
         let vs = match vs_guard.as_ref() {
@@ -1184,7 +1185,7 @@ impl ConversationStore {
         let lancedb = vs.as_any()
             .downcast_ref::<crate::services::vector_store::lancedb_store::LanceDbStore>()
             .ok_or_else(|| anyhow::anyhow!("vector store is not LanceDbStore"))?;
-        lancedb.reembed_turns(raw_turns, embedder, on_progress).await
+        lancedb.reembed_turns(raw_turns, embedder, on_progress, force_rebuild).await
     }
 
     /// 从 conversations 表中提取所有用户/助手消息对，生成 RawTurn 列表。

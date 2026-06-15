@@ -96,11 +96,22 @@ impl LanceDbStore {
         })
     }
 
-    /// 从全局 embedder 获取向量维度，fallback 到默认值。
+    /// 从全局 embedder 获取向量维度。
+    ///
+    /// [加固] 仅在 embedder 就绪时应调用此方法。fallback 到 DEFAULT_VECTOR_DIM 时
+    /// 会输出警告日志，便于排查维度不匹配问题。
     fn resolve_vector_dim() -> i32 {
-        crate::services::embedder::get_embedder()
-            .map(|e| e.dimension() as i32)
-            .unwrap_or(DEFAULT_VECTOR_DIM)
+        match crate::services::embedder::get_embedder() {
+            Some(e) => e.dimension() as i32,
+            None => {
+                eprintln!(
+                    "[xechat] WARNING: resolve_vector_dim called with no embedder available, \
+                     falling back to DEFAULT_VECTOR_DIM={}. This may cause dimension mismatch.",
+                    DEFAULT_VECTOR_DIM
+                );
+                DEFAULT_VECTOR_DIM
+            }
+        }
     }
 
     /// 从已有表的 schema 中检测向量列维度。
@@ -393,17 +404,27 @@ impl LanceDbStore {
     }
 
     /// 构建 TurnEntry 的向量列（FixedSizeListArray）。
-    fn build_vectors_array(entry: &crate::models::memory::TurnEntry, vector_dim: i32) -> FixedSizeListArray {
-        FixedSizeListArray::from_iter_primitive::<arrow_array::types::Float32Type, _, _>(
+    ///
+    /// 如果任何 chunk 的 embedding 维度与 vector_dim 不匹配，返回错误而非静默丢弃数据。
+    fn build_vectors_array(entry: &crate::models::memory::TurnEntry, vector_dim: i32) -> anyhow::Result<FixedSizeListArray> {
+        let dim = vector_dim as usize;
+        for (ci, c) in entry.chunks.iter().enumerate() {
+            if c.embedding.len() != dim {
+                anyhow::bail!(
+                    "Chunk {ci} embedding dimension mismatch: expected {}, got {}. \
+                     Turn ID={}, embedder may have changed without rebuilding vectors.",
+                    dim,
+                    c.embedding.len(),
+                    &entry.id[..8.min(entry.id.len())]
+                );
+            }
+        }
+        Ok(FixedSizeListArray::from_iter_primitive::<arrow_array::types::Float32Type, _, _>(
             entry.chunks.iter().map(|c| {
-                if c.embedding.len() == vector_dim as usize {
-                    Some(c.embedding.iter().map(|v| Some(*v)).collect::<Vec<_>>())
-                } else {
-                    None
-                }
+                Some(c.embedding.iter().map(|v| Some(*v)).collect::<Vec<_>>())
             }),
             vector_dim,
-        )
+        ))
     }
 
     /// 构建 TurnEntry 的 RecordBatch。
@@ -421,7 +442,7 @@ impl LanceDbStore {
         let start_chars = Int32Array::from_iter_values(entry.chunks.iter().map(|c| c.start_char as i32));
         let end_chars = Int32Array::from_iter_values(entry.chunks.iter().map(|c| c.end_char as i32));
         let timestamps = StringArray::from_iter_values(std::iter::repeat(entry.timestamp.to_rfc3339()).take(n));
-        let vectors = Self::build_vectors_array(entry, vector_dim);
+        let vectors = Self::build_vectors_array(entry, vector_dim)?;
 
         Ok(RecordBatch::try_new(Self::turns_arrow_schema(vector_dim), vec![
             Arc::new(ids), Arc::new(conv_ids), Arc::new(user_msg_ids),
@@ -590,6 +611,7 @@ impl LanceDbStore {
         raw_turns: Vec<RawTurn>,
         embedder: &Arc<dyn crate::services::embedder::Embedder>,
         on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+        force_rebuild: bool,
     ) -> anyhow::Result<(usize, usize)> {
         if raw_turns.is_empty() {
             eprintln!("[xechat] reembed_turns: no turns to process");
@@ -605,9 +627,16 @@ impl LanceDbStore {
         }
 
         // 阶段 0：读取已存在的 turn ID，支持断点续传
-        let existing_ids = self.get_existing_turn_ids().await.unwrap_or_default();
+        // force_rebuild=true 时跳过检测，强制覆盖所有向量
+        let existing_ids = if force_rebuild {
+            std::collections::HashSet::new()
+        } else {
+            self.get_existing_turn_ids().await.unwrap_or_default()
+        };
         if !existing_ids.is_empty() {
             eprintln!("[xechat] reembed_turns: skipping {} already-embedded turns", existing_ids.len());
+        } else if force_rebuild {
+            eprintln!("[xechat] reembed_turns: force rebuild mode, will overwrite all vectors");
         }
 
         let chunk_params = crate::services::embedder::ChunkParams::from_context_window(
@@ -720,6 +749,13 @@ impl LanceDbStore {
         }
 
         eprintln!("[xechat] reembed_turns: done — success={}, skipped={}", success_count, skipped_count);
+
+        // 批量重建完成后，确保向量索引已构建（单条 add_turn 可能因行数不足跳过）
+        if success_count > 0 {
+            if let Err(e) = self.maybe_rebuild_vector_index().await {
+                eprintln!("[xechat] reembed_turns: post-rebuild index check failed: {}", e);
+            }
+        }
 
         if skipped_count > 0 && success_count == 0 {
             anyhow::bail!("All {} turns failed or were skipped", skipped_count);

@@ -325,3 +325,7 @@ path = "tests/services/ai/ollama_stream_helpers_test.rs"
 [[test]]
 name = "services_ai_openai_stream_helpers_test"
 path = "tests/services/ai/openai_stream_helpers_test.rs"
+
+[patch.crates-io]
+embellama = { path = ".cargo/patch/embellama" }
+
