@@ -120,9 +120,9 @@ xechat/
     │   │       ├── ollama.rs         # Ollama（NDJSON 流式）
     │   │       └── openai_compatible.rs  # 通用 OpenAI 兼容
     │   ├── embedder/       # 文本向量化抽象层
-    │   │   ├── mod.rs      # Embedder trait + 全局单例
-    │   │   ├── e5.rs       # E5 GGUF 本地嵌入器（embellama）
-    │   │   └── manager.rs  # EmbedManager + 语义分块
+   │   │   ├── mod.rs      # Embedder trait + 全局单例
+   │   │   ├── qwen3.rs    # Qwen3-Embedding 本地嵌入器（embellama, Last pooling）
+   │   │   └── manager.rs  # EmbedManager + 语义分块
     │   ├── intent/         # 用户意图识别
     │   │   └── mod.rs      # BuiltinIntentAnalyzer（正则匹配）
     │   ├── vector_store/   # 向量存储抽象层

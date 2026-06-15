@@ -81,7 +81,7 @@ models/       模型层 → 纯 DTO，零依赖
 | UI 框架 | Dioxus 0.7 (Desktop) |
 | 样式 | SCSS + dioxus_style（fork 改良的作用域样式 crate） |
 | 向量数据库 | LanceDB |
-| 本地嵌入 | embellama (E5 GGUF) |
+| 本地嵌入 | embellama (Qwen3-Embedding GGUF) |
 | Markdown | comrak + KaTeX + Mermaid |
 | 国际化 | rust-i18n |
 

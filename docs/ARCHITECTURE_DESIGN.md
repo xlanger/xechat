@@ -64,7 +64,7 @@ main.rs
 
 App 组件
   → use_app_provider()      → 加载 config.toml + 同步 theme/language
-  → use_conversation_provider() → 加载对话列表 + 初始化后端（E5 嵌入器 + LanceDB）
+  → use_conversation_provider() → 加载对话列表 + 初始化后端（Qwen3-Embedding + LanceDB）
   → use_ui_provider()
   → use_search_provider()
   → 渲染 Layout + Notification + RenameModal + DeleteModal
@@ -169,7 +169,7 @@ services/ai/
 
 | 组件 | 实现 | 存储 |
 |------|------|------|
-| Embedder | E5 GGUF（embellama）或 Ollama | 全局单例 |
+| Embedder | Qwen3-Embedding GGUF（embellama）或 Ollama | 全局单例 |
 | IntentAnalyzer | 正则匹配（BuiltinIntentAnalyzer） | 无状态 |
 | VectorStore | LanceDB（lancedb_store） | 全局单例 |
 | MemoryPipeline | 组合以上三者 | 全局单例 |
@@ -237,7 +237,7 @@ SearchView
 | HTTP 客户端 | reqwest 0.11 | JSON + SSE 流式 |
 | 异步运行时 | tokio | 全功能 |
 | 向量数据库 | LanceDB | 对话持久化 + 向量检索 |
-| 本地嵌入 | embellama (E5 GGUF) | multilingual-e5-base |
+| 本地嵌入 | embellama (Qwen3-Embedding GGUF) | qwen3-embedding-0.6b |
 | Markdown | comrak 0.52 | 含 syntect 代码高亮 |
 | 数学公式 | katex 0.4 | 行内渲染 |
 | 图表 | mermaid-rs-renderer | Mermaid 图表 |

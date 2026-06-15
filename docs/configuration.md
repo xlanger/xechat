@@ -32,7 +32,7 @@ max_memory_results = 5
 # 用户偏好配置
 # ==============================================
 [preferences]
-embed_provider = "default"   # "default"（内置 E5）或 "ollama"
+embed_provider = "default"   # "default"（内置 Qwen3-Embedding）或 "ollama"
 
 [preferences.ollama]
 host = "http://localhost:11434"
@@ -109,7 +109,7 @@ timeout = 120
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `preferences.embed_provider` | String | `"default"` | 嵌入提供商：`"default"`（E5）或 `"ollama"` |
+| `preferences.embed_provider` | String | `"default"` | 嵌入提供商：`"default"`（Qwen3-Embedding）或 `"ollama"` |
 | `preferences.ollama.host` | String | `"http://localhost:11434"` | Ollama 服务地址 |
 | `preferences.ollama.embed_model` | String | `""` | Ollama 嵌入模型（留空自动检测） |
 

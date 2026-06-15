@@ -161,7 +161,7 @@ App
 App → use_app_provider()
     → load_config() → 同步 theme_mode / language
     → use_conversation_provider()
-    → load_conversations() + init_backend()（E5 + LanceDB）
+    → load_conversations() + init_backend()（Qwen3-Embedding + LanceDB）
 ```
 
 ### 新建对话
@@ -261,3 +261,151 @@ cargo test
 cargo test --test models_ai_test
 cargo test --test services_ai_streaming_test
 ```
+
+## 嵌入架构
+
+### 模型选择
+
+XEChat 支持两种嵌入模式，通过 `config.preferences.embed_provider` 切换：
+
+| 模式 | 值 | 说明 |
+|------|-----|------|
+| 内置模式 | `"default"` | 使用本地 GGUF 文件 + embellama 引擎（默认） |
+| Ollama 模式 | `"ollama"` | 通过 HTTP 调用 Ollama `/api/embed` 端点 |
+
+### 内置嵌入模型：Qwen3-Embedding
+
+当前内置模型为 **qwen3-embedding-0.6b-q8_0.gguf**（1024 维），基于 Qwen2 decoder 架构。
+
+**关键配置要点**：
+
+```rust
+// src/services/embedder/qwen3.rs
+
+// 1. Pooling 策略必须为 Last（decoder 嵌入模型标准做法）
+//    Mean pooling 在 causal attention 下会稀释早期 token 的弱表示
+.with_pooling_strategy(PoolingStrategy::Last)
+
+// 2. 显式配置 llama 参数以支持长文本输入
+//    decoder 默认 n_batch=2048, n_seq_max=2 → effective_max=1022（过小）
+.with_n_batch(8192)      // 可用上下文窗口
+.with_n_seq_max(1)       // 嵌入只需单序列
+.with_n_ubatch(512)      // 必须显式设置，防止自动推导溢出 SIGSEGV
+```
+
+**effective max tokens 公式**：`n_batch / n_seq_max - 2`
+
+| 配置 | n_batch | n_seq_max | effective_max |
+|------|---------|-----------|---------------|
+| decoder 默认 | 2048 | 2 | **1022** |
+| 当前推荐 | 8192 | 1 | **8190** |
+
+### Decoder vs Encoder 判定
+
+embellama 通过 GGUF 元数据中的架构字符串判断模型类型：
+
+- **Decoder**（`is_decoder=true`）：调用 `ctx.decode()` → 自回归解码 + causal attention mask → **需要 Last pooling**
+- **Encoder**（`is_decoder=false`）：调用 `ctx.encode()` → 双向编码 + bidirectional attention → **使用 Mean pooling**
+
+**注意**：qwen3-embedding 架构名含 `"qwen"`，被 embellama 归类为 decoder。**不要强制改为 encoder**——`ctx.encode()` 对该模型会导致 SIGSEGV。正确做法是保持 decoder 模式 + Last pooling。
+
+### Cargo Patch 机制
+
+当第三方 crate（如 embellama）的行为不符合需求时，使用 `[patch.crates-io]` 本地修改源码，无需 fork 整个仓库：
+
+```toml
+# Cargo.toml
+[patch.crates-io]
+embellama = { path = ".cargo/patch/embellama" }
+```
+
+```
+.cargo/patch/embellama/     ← 完整的 embellama 源码副本
+└── src/
+    ├── gguf.rs             ← 架构判定逻辑
+    ├── model.rs            ← 参数推导、flash attention 等
+    └── ...
+```
+
+**使用规范**：
+- patch 目录仅包含需要修改的文件差异，其余与原版一致
+- 每次 patch 修改需在 commit message 中说明
+- 避免过度 patch——优先在项目代码层解决（如 qwen3.rs 中的参数配置）
+
+### Ollama API Options
+
+Ollama 模式下通过 HTTP options 传递参数：
+
+```rust
+// src/services/ollama/embed.rs
+.json(&serde_json::json!({
+    "model": self.model,
+    "input": texts,
+    "options": {
+        "num_ctx": self.context_window,   // 上下文长度
+        "num_batch": self.context_window,  // 批处理大小
+    }
+}))
+```
+
+### 嵌入器切换防御规则
+
+切换嵌入提供商时存在"配置不完整导致误触发重建"的风险。以下场景必须防护：
+
+| 场景 | embed_provider | embed_model | 正确行为 |
+|------|---------------|-------------|---------|
+| 用户选 ollama provider | `"ollama"` | `""` | **不触发 reinit**，等用户选模型 |
+| 用户选具体模型 | `"ollama"` | `"qwen3-..."` | 触发 reinit |
+| 应用启动（配置完整） | `"ollama"` | `"qwen3-...""` | 正常初始化 Ollama |
+| 应用启动（未配完） | `"ollama"` | `""` | **跳过 init**，不 fallback 内置 |
+| 心跳检测（未配完） | `"ollama"` | `""` | 返回 false，不误报 ready |
+| 切回内置模式 | `"default"` | `""` | 初始化 Qwen3 + rebuild |
+
+**关键函数**：
+- `should_enable_ollama(config)` — ollama 已完整配置（provider + model 都有值）
+- `is_ollama_provider_selected(config)` — 仅检查 provider（用于启动/心跳守卫）
+- `init_embedder()` — 三级判断：ollama 完整 → ollama 未配完(跳过) → 内置模式
+
+## 向量存储与索引
+
+### LanceDB 表结构
+
+```
+turns.lance
+├── id: string (primary key)
+├── conversation_id: string
+├── role: string (user/assistant)
+├── content: string
+├── timestamp: datetime
+├── vector: fixed_size_list<float32>[dim]  (向量列)
+└── metadata: string (JSON)
+```
+
+### 向量索引策略
+
+LanceDB 使用 IVF_PQ 索引加速 ANN 搜索。索引构建遵循以下规则：
+
+| 条件 | 行为 |
+|------|------|
+| 行数 < `MIN_INDEX_ROWS`(10000) | 不构建索引（全量扫描更快） |
+| 行数 ≥ MIN_INDEX_ROWS 且无索引 | 构建 IVF_PQ 索引 |
+| 行数增长 >50% 或距上次 >24h | 触发增量重建 |
+| `force_rebuild=true` | 删除旧表重建（忽略已存在的 turn） |
+
+### 维度校验
+
+向量写入前进行维度一致性检查：
+
+- **正常流程**：`resolve_vector_dim()` 从全局 embedder 获取维度
+- **维度不匹配**：返回 `anyhow::Error`（含 chunk 索引、期望/实际维度、Turn ID），不再静默丢弃数据
+- **embedder 未就绪**：fallback 到 `DEFAULT_VECTOR_DIM`(1024)，输出 WARNING 日志
+
+### Rebuild Vectors 三场景
+
+| 触发点 | force_rebuild | 用途 |
+|--------|--------------|------|
+| `init_backend()` | `false` | 应用启动，断点续传（跳过已有 turn） |
+| `reinit_embedder()` | `true` | 模型变更后，全量重建 |
+| `rebuild_vectors()` | `true` | 用户手动触发，强制覆盖 |
+
+批量重建完成后自动触发一次 `maybe_rebuild_vector_index()` 确保索引就绪。
