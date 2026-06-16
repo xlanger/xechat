@@ -2,6 +2,10 @@
 
 一款基于 Dioxus 的桌面 AI 聊天客户端，支持多模型提供商、智能记忆、语义搜索。
 
+|                           |                        |                      |
+|---------------------------|------------------------|----------------------|
+| <img src="assets/settings.png" style="max-width: 100%; display: inline-block;"> | <img src="assets/search.png" style="max-width: 100%; display: inline-block;"> | <img src="assets/chat.png" style="max-width: 100%; display: inline-block;"> |
+
 ## 特性
 
 - **多模型支持** — DeepSeek、OpenAI、Ollama 及任意 OpenAI 兼容服务
@@ -93,10 +97,6 @@ models/       模型层 → 纯 DTO，零依赖
 | [开发文档](docs/development.md) | 项目结构、组件树、状态管理、样式开发、测试 |
 | [配置说明](docs/configuration.md) | 完整配置示例、环境变量、Provider 路由规则 |
 | [打包指南](docs/packaging.md) | macOS/Linux/Windows 打包流程 |
-
-![](assets/settings.png)
-![](assets/search.png)
-![](assets/chat.png)
 
 ## License
 
