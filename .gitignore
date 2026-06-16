@@ -10,6 +10,9 @@ docs/superpowers/*
 # Build outputs
 target
 *.local
+lcov.info
+crap_report.txt
+crap_report_new.txt
 
 # OS
 .DS_Store

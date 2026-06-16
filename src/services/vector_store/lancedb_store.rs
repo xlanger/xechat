@@ -43,6 +43,18 @@ pub struct EmbedderMeta {
     pub dimension: i32,
 }
 
+/// User-Assistant 配对结果。
+///
+/// 从 `extract_turns_from_batches` (CRAP 110) 提取的配对逻辑输出。
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserAssistantPair {
+    pub user_msg_id: String,
+    pub assistant_msg_id: String,
+    pub user_content: String,
+    pub assistant_content: String,
+    pub timestamp: String,
+}
+
 /// 从 turns 表读取的原始轮次数据，用于切换 embedder 时重新嵌入。
 ///
 /// 只保留文本字段，不包含向量（向量需要用新 embedder 重新生成）。
@@ -293,6 +305,180 @@ impl LanceDbStore {
             .as_secs()
     }
 
+    // ── CRAP 重构：从高复杂度函数提取的纯逻辑 ──────────────────────
+
+    /// 计算两个向量的余弦相似度。
+    ///
+    /// 从 `execute_vector_search` (CRAP 210) 提取，用于诊断日志。
+    /// 零向量返回 0.0（避免除零）。
+    pub fn compute_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+        if a.len() != b.len() || a.is_empty() {
+            return 0.0;
+        }
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = a.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let norm_b: f32 = b.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm_a < f32::EPSILON || norm_b < f32::EPSILON {
+            return 0.0;
+        }
+        dot / (norm_a * norm_b)
+    }
+
+    /// 将消息列表配对为 User→Assistant 轮次。
+    ///
+    /// 从 `extract_turns_from_batches` (CRAP 110) 提取的核心配对逻辑。
+    /// 规则：
+    /// - 按顺序查找 User 消息，紧跟的 Assistant 消息配对
+    /// - Assistant 内容为空（trim 后）则跳过
+    /// - User 后无 Assistant 则跳过
+    pub fn pair_user_assistant_messages(msgs: &[(String, String, String, String)]) -> Vec<UserAssistantPair> {
+        // 每个 tuple: (msg_id, role, content, timestamp)
+        let mut pairs = Vec::new();
+        let mut i = 0;
+        while i < msgs.len() {
+            let (_, role, _, _) = &msgs[i];
+            if role != "User" {
+                i += 1;
+                continue;
+            }
+            let (uid, _, ucontent, _) = &msgs[i];
+
+            let aidxt = i + 1;
+            if aidxt < msgs.len() && msgs[aidxt].1 == "Assistant" {
+                let (aid, _, acontent, ats) = &msgs[aidxt];
+                if acontent.trim().is_empty() {
+                    i = aidxt + 1;
+                    continue;
+                }
+                pairs.push(UserAssistantPair {
+                    user_msg_id: uid.clone(),
+                    assistant_msg_id: aid.clone(),
+                    user_content: ucontent.clone(),
+                    assistant_content: acontent.clone(),
+                    timestamp: ats.clone(),
+                });
+                i = aidxt + 1;
+            } else {
+                i += 1;
+            }
+        }
+        pairs
+    }
+
+    /// 截断字符串到指定长度（超出部分用省略号替代）。
+    ///
+    /// 从 `aggregate_summary_from_batches` (CRAP 90) 提取。
+    pub fn truncate_snippet(s: &str, max_len: usize) -> String {
+        if s.len() <= max_len {
+            return s.to_string();
+        }
+        if max_len == 0 {
+            return "…".to_string();
+        }
+        let end = s.char_indices()
+            .take_while(|(idx, _)| *idx < max_len.saturating_sub(1))
+            .last()
+            .map(|(idx, c)| idx + c.len_utf8())
+            .unwrap_or(0);
+        format!("{}…", &s[..end])
+    }
+
+    /// 将 turn 文本分块，返回 (chunk_texts, chunk_indices, chunk_starts, chunk_ends)。
+    ///
+    /// 从 `reembed_turns` (CRAP 23) 提取的纯分块逻辑。
+    pub fn chunk_turn_text(turn_text: &str, chunk_params: &crate::services::embedder::ChunkParams) -> (Vec<String>, Vec<u32>, Vec<u32>, Vec<u32>) {
+        let char_count = turn_text.chars().count();
+        if char_count < chunk_params.target_chars {
+            let len = turn_text.len() as u32;
+            return (vec![turn_text.to_string()], vec![0u32], vec![0u32], vec![len]);
+        }
+        let spans = crate::services::embedder::manager::semantic_chunk(turn_text, *chunk_params);
+        let mut texts = Vec::with_capacity(spans.len());
+        let mut indices = Vec::with_capacity(spans.len());
+        let mut starts = Vec::with_capacity(spans.len());
+        let mut ends = Vec::with_capacity(spans.len());
+        for (ci, span) in spans.iter().enumerate() {
+            texts.push(span.text.clone());
+            indices.push(ci as u32);
+            starts.push(span.start as u32);
+            ends.push(span.end as u32);
+        }
+        (texts, indices, starts, ends)
+    }
+
+    /// 编码分块文本，单条失败自动重试最多 MAX_ENCODE_RETRIES 次。
+    /// 返回 Ok(chunks) 或 Err(last_error)。
+    ///
+    /// 从 `reembed_turns` (CRAP 23) 提取的编码+重试逻辑。
+    pub async fn encode_chunks_with_retry(
+        embedder: &Arc<dyn crate::services::embedder::Embedder>,
+        chunk_texts: &[String],
+        chunk_indices: &[u32],
+        chunk_starts: &[u32],
+        chunk_ends: &[u32],
+        turn_idx: usize,
+        total: usize,
+    ) -> anyhow::Result<Vec<crate::models::memory::ChunkMeta>> {
+        const MAX_ENCODE_RETRIES: u32 = 3;
+        const RETRY_DELAY_SECS: u64 = 2;
+        let mut chunks = Vec::with_capacity(chunk_texts.len());
+        for (ci, text) in chunk_texts.iter().enumerate() {
+            let mut last_err = None;
+            for retry in 0..MAX_ENCODE_RETRIES {
+                if retry > 0 {
+                    eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} retry {}/{}", turn_idx, total, ci + 1, chunk_texts.len(), retry, MAX_ENCODE_RETRIES);
+                    tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                }
+                match embedder.encode_passage(text).await {
+                    Ok(embedding) => {
+                        chunks.push(crate::models::memory::ChunkMeta {
+                            chunk_index: chunk_indices[ci],
+                            chunk_text: text.clone(),
+                            start_char: chunk_starts[ci],
+                            end_char: chunk_ends[ci],
+                            embedding,
+                        });
+                        last_err = None;
+                        break;
+                    }
+                    Err(e) => { last_err = Some(e); }
+                }
+            }
+            if let Some(e) = last_err {
+                eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} encode FAILED after {} retries: {}", turn_idx, total, ci + 1, chunk_texts.len(), MAX_ENCODE_RETRIES, e);
+                return Err(e);
+            }
+        }
+        Ok(chunks)
+    }
+
+    /// 从 RawTurn 和 chunks 构建 TurnEntry。
+    ///
+    /// 从 `reembed_turns` (CRAP 23) 提取的纯构建逻辑。
+    pub fn build_turn_entry(turn: RawTurn, chunks: Vec<crate::models::memory::ChunkMeta>) -> crate::models::memory::TurnEntry {
+        let timestamp = chrono::DateTime::parse_from_rfc3339(&turn.timestamp)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+        crate::models::memory::TurnEntry {
+            id: turn.id,
+            conversation_id: turn.conversation_id,
+            user_message_id: turn.user_message_id,
+            assistant_message_id: turn.assistant_message_id,
+            turn_index: turn.turn_index as u32,
+            user_content: turn.user_content,
+            assistant_content: turn.assistant_content,
+            timestamp,
+            chunks,
+        }
+    }
+
+    /// 判断消息 ID 是否为 __empty 占位符。
+    ///
+    /// 从 `extract_turns_from_batches` 和 `aggregate_summary_from_batches` 提取。
+    pub fn should_skip_empty_message(msg_id: &str) -> bool {
+        msg_id.ends_with("__empty")
+    }
+
     /// 根据条件重建向量索引（首次创建或增量重建）。
     pub async fn rebuild_index_if_needed(
         &self,
@@ -492,55 +678,62 @@ impl VectorStore for LanceDbStore {
     }
 }
 
+/// 单个 turn 的处理结果
+enum ProcessResult {
+    Success,
+    Skipped,
+}
+
 impl LanceDbStore {
     /// 执行向量搜索并收集结果批次。
     async fn execute_vector_search(&self, query_vector: &[f32], top_k: usize) -> anyhow::Result<Vec<RecordBatch>> {
         let table = self.turns_table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("turns table not initialized"))?;
 
-        // 诊断：搜索前计数行数 + 打印查询向量前5维
+        self.log_table_row_count(table, query_vector).await;
+        self.diagnose_stored_vectors(table, query_vector).await;
+
+        let batches: Vec<RecordBatch> = table
+            .vector_search(query_vector)?
+            .distance_type(DistanceType::Cosine)
+            .limit(top_k)
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+        Ok(batches)
+    }
+
+    /// 诊断：打印表行数和查询向量前5维。
+    async fn log_table_row_count(&self, table: &lancedb::Table, query_vector: &[f32]) {
         match table.count_rows(None).await {
             Ok(count) => eprintln!("[xechat:search] LanceDB table row_count={} query_vec_first5={:?}",
                 count, &query_vector[..5.min(query_vector.len())]),
             Err(e) => eprintln!("[xechat:search] Failed to count rows: {}", e),
         }
+    }
 
-        // 诊断：读取表中实际存储的向量，与写入时对比
-        {
-            let scan_stream = table.query().execute().await;
-            if let Ok(stream) = scan_stream {
-                let scan_batches: Vec<RecordBatch> = stream.try_collect().await.unwrap_or_default();
-                for (bi, batch) in scan_batches.iter().enumerate() {
-                    let ids = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
-                    let vectors = batch.column_by_name("vector").and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
-                    if let (Some(ids), Some(vectors)) = (ids, vectors) {
-                        for ri in 0..ids.len().min(4) {
-                            let id = ids.value(ri);
-                            if let Some(vec_val) = vectors.value(ri).as_any().downcast_ref::<Float32Array>() {
-                                let stored: Vec<f32> = vec_val.values().to_vec();
-                                // 计算与查询向量的手动 cosine similarity
-                                let dot: f32 = stored.iter().zip(query_vector.iter()).map(|(a, b)| a * b).sum();
-                                let norm_s: f32 = stored.iter().map(|v| v * v).sum::<f32>().sqrt();
-                                let norm_q: f32 = query_vector.iter().map(|v| v * v).sum::<f32>().sqrt();
-                                let manual_cosine = if norm_s > 0.0 && norm_q > 0.0 { dot / (norm_s * norm_q) } else { 0.0 };
-                                eprintln!("[xechat:search] stored_vec[batch={},row={},id={}] first5={:?} manual_cosine_with_query={:.6}",
-                                    bi, ri, id, &stored[..5.min(stored.len())], manual_cosine);
-                            }
+    /// 诊断：读取表中实际存储的向量，计算与查询向量的余弦相似度并打印日志。
+    async fn diagnose_stored_vectors(&self, table: &lancedb::Table, query_vector: &[f32]) {
+        let scan_stream = table.query().execute().await;
+        if let Ok(stream) = scan_stream {
+            let scan_batches: Vec<RecordBatch> = stream.try_collect().await.unwrap_or_default();
+            for (bi, batch) in scan_batches.iter().enumerate() {
+                let ids = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+                let vectors = batch.column_by_name("vector").and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
+                if let (Some(ids), Some(vectors)) = (ids, vectors) {
+                    for ri in 0..ids.len().min(4) {
+                        let id = ids.value(ri);
+                        if let Some(vec_val) = vectors.value(ri).as_any().downcast_ref::<Float32Array>() {
+                            let stored: Vec<f32> = vec_val.values().to_vec();
+                            let manual_cosine = Self::compute_cosine_similarity(&stored, query_vector);
+                            eprintln!("[xechat:search] stored_vec[batch={},row={},id={}] first5={:?} manual_cosine_with_query={:.6}",
+                                bi, ri, id, &stored[..5.min(stored.len())], manual_cosine);
                         }
                     }
                 }
             }
         }
-
-        let stream = table
-            .vector_search(query_vector)?
-            .distance_type(DistanceType::Cosine)
-            .limit(top_k)
-            .execute()
-            .await?;
-
-        let batches: Vec<RecordBatch> = stream.try_collect().await?;
-        Ok(batches)
     }
 
     /// 读取 turns 表中所有轮次的原始文本数据。
@@ -621,23 +814,9 @@ impl LanceDbStore {
         eprintln!("[xechat] reembed_turns: starting {} turns with embedder {}", raw_turns.len(), embedder.name());
         eprintln!("[xechat] reembed_turns: turns_table={} vector_dim={}",
             self.turns_table.is_some(), self.vector_dim);
-        // 打印输入 turn ID 样本，与 existing_ids 对比
-        for t in raw_turns.iter().take(3) {
-            eprintln!("[xechat]   input_turn sample: id={} conv_id={}", &t.id[..8.min(t.id.len())], &t.conversation_id[..8.min(t.conversation_id.len())]);
-        }
 
-        // 阶段 0：读取已存在的 turn ID，支持断点续传
-        // force_rebuild=true 时跳过检测，强制覆盖所有向量
-        let existing_ids = if force_rebuild {
-            std::collections::HashSet::new()
-        } else {
-            self.get_existing_turn_ids().await.unwrap_or_default()
-        };
-        if !existing_ids.is_empty() {
-            eprintln!("[xechat] reembed_turns: skipping {} already-embedded turns", existing_ids.len());
-        } else if force_rebuild {
-            eprintln!("[xechat] reembed_turns: force rebuild mode, will overwrite all vectors");
-        }
+        let existing_ids = self.load_existing_ids(force_rebuild).await;
+        eprintln!("[xechat] reembed_turns: {} existing IDs, force_rebuild={}", existing_ids.len(), force_rebuild);
 
         let chunk_params = crate::services::embedder::ChunkParams::from_context_window(
             embedder.context_window()
@@ -648,108 +827,68 @@ impl LanceDbStore {
         let mut skipped_count = 0;
 
         for (i, turn) in raw_turns.into_iter().enumerate() {
-            // 断点续传：跳过已存在的 turn
-            if existing_ids.contains(&turn.id) {
-                eprintln!("[xechat:reembed] turn {}/{} SKIPPED (already exists): {}", i + 1, total, &turn.id[..8.min(turn.id.len())]);
-                skipped_count += 1;
-                on_progress(i + 1, total);
-                continue;
+            match self.process_single_turn(turn, &existing_ids, embedder, &chunk_params, i, total, on_progress).await {
+                ProcessResult::Success => success_count += 1,
+                ProcessResult::Skipped => skipped_count += 1,
             }
-
-            let turn_text = format!("用户：{}\n助手：{}", turn.user_content, turn.assistant_content);
-            let char_count = turn_text.chars().count();
-
-            // 分块
-            let (chunk_texts, chunk_indices, chunk_starts, chunk_ends) = if char_count < chunk_params.target_chars {
-                let len = turn_text.len() as u32;
-                (vec![turn_text], vec![0u32], vec![0u32], vec![len])
-            } else {
-                let spans = crate::services::embedder::manager::semantic_chunk(&turn_text, chunk_params);
-                let mut texts = Vec::with_capacity(spans.len());
-                let mut indices = Vec::with_capacity(spans.len());
-                let mut starts = Vec::with_capacity(spans.len());
-                let mut ends = Vec::with_capacity(spans.len());
-                for (ci, span) in spans.iter().enumerate() {
-                    texts.push(span.text.clone());
-                    indices.push(ci as u32);
-                    starts.push(span.start as u32);
-                    ends.push(span.end as u32);
-                }
-                (texts, indices, starts, ends)
-            };
-
-            // 编码该 turn 的所有分块（单条失败自动重试，最多 3 次）
-            const MAX_ENCODE_RETRIES: u32 = 3;
-            const RETRY_DELAY_SECS: u64 = 2;
-            let mut chunks = Vec::with_capacity(chunk_texts.len());
-            let mut encode_ok = true;
-            for (ci, text) in chunk_texts.iter().enumerate() {
-                let mut last_err = None;
-                for retry in 0..MAX_ENCODE_RETRIES {
-                    if retry > 0 {
-                        eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} retry {}/{}", i + 1, total, ci + 1, chunk_texts.len(), retry, MAX_ENCODE_RETRIES);
-                        tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
-                    }
-                    match embedder.encode_passage(text).await {
-                        Ok(embedding) => {
-                            chunks.push(crate::models::memory::ChunkMeta {
-                                chunk_index: chunk_indices[ci],
-                                chunk_text: text.clone(),
-                                start_char: chunk_starts[ci],
-                                end_char: chunk_ends[ci],
-                                embedding,
-                            });
-                            last_err = None;
-                            break;
-                        }
-                        Err(e) => {
-                            last_err = Some(e);
-                        }
-                    }
-                }
-                if let Some(e) = last_err {
-                    eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} encode FAILED after {} retries: {}", i + 1, total, ci + 1, chunk_texts.len(), MAX_ENCODE_RETRIES, e);
-                    encode_ok = false;
-                    break; // 该 turn 的任一分块失败则整个 turn 跳过
-                }
-            }
-
-            if !encode_ok || chunks.is_empty() {
-                eprintln!("[xechat:reembed] turn {}/{} SKIPPED due to encode error", i + 1, total);
-                skipped_count += 1;
-                on_progress(i + 1, total);
-                continue;
-            }
-
-            // 写入 LanceDB（立即持久化）
-            let timestamp = chrono::DateTime::parse_from_rfc3339(&turn.timestamp)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now());
-
-            let entry = crate::models::memory::TurnEntry {
-                id: turn.id,
-                conversation_id: turn.conversation_id,
-                user_message_id: turn.user_message_id,
-                assistant_message_id: turn.assistant_message_id,
-                turn_index: turn.turn_index as u32,
-                user_content: turn.user_content,
-                assistant_content: turn.assistant_content,
-                timestamp,
-                chunks,
-            };
-
-            if let Err(e) = self.add_turn(entry).await {
-                eprintln!("[xechat:reembed] turn {}/{} write FAILED: {}", i + 1, total, e);
-                skipped_count += 1;
-            } else {
-                success_count += 1;
-            }
-
-            on_progress(i + 1, total);
         }
 
         eprintln!("[xechat] reembed_turns: done — success={}, skipped={}", success_count, skipped_count);
 
+        self.finalize_reembed(success_count, skipped_count).await
+    }
+
+    /// 加载已存在的 turn ID 集合，force_rebuild 时返回空集。
+    async fn load_existing_ids(&self, force_rebuild: bool) -> std::collections::HashSet<String> {
+        if force_rebuild {
+            std::collections::HashSet::new()
+        } else {
+            self.get_existing_turn_ids().await.unwrap_or_default()
+        }
+    }
+
+    /// 处理单个 turn：检查是否已存在、分块、编码、写入。
+    async fn process_single_turn(
+        &self,
+        turn: RawTurn,
+        existing_ids: &std::collections::HashSet<String>,
+        embedder: &Arc<dyn crate::services::embedder::Embedder>,
+        chunk_params: &crate::services::embedder::ChunkParams,
+        index: usize,
+        total: usize,
+        on_progress: &(dyn Fn(usize, usize) + Send + Sync),
+    ) -> ProcessResult {
+        if existing_ids.contains(&turn.id) {
+            eprintln!("[xechat:reembed] turn {}/{} SKIPPED (already exists): {}", index + 1, total, &turn.id[..8.min(turn.id.len())]);
+            on_progress(index + 1, total);
+            return ProcessResult::Skipped;
+        }
+
+        let turn_text = format!("用户：{}\n助手：{}", turn.user_content, turn.assistant_content);
+        let (chunk_texts, chunk_indices, chunk_starts, chunk_ends) = Self::chunk_turn_text(&turn_text, chunk_params);
+
+        let chunks = match Self::encode_chunks_with_retry(embedder, &chunk_texts, &chunk_indices, &chunk_starts, &chunk_ends, index + 1, total).await {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("[xechat:reembed] turn {}/{} SKIPPED due to encode error", index + 1, total);
+                on_progress(index + 1, total);
+                return ProcessResult::Skipped;
+            }
+        };
+
+        let entry = Self::build_turn_entry(turn, chunks);
+        if let Err(e) = self.add_turn(entry).await {
+            eprintln!("[xechat:reembed] turn {}/{} write FAILED: {}", index + 1, total, e);
+            on_progress(index + 1, total);
+            return ProcessResult::Skipped;
+        }
+
+        on_progress(index + 1, total);
+        ProcessResult::Success
+    }
+
+    /// 重建向量索引并根据结果判断是否需要报错。
+    async fn finalize_reembed(&self, success_count: usize, skipped_count: usize) -> anyhow::Result<(usize, usize)> {
         // 批量重建完成后，确保向量索引已构建（单条 add_turn 可能因行数不足跳过）
         if success_count > 0 {
             if let Err(e) = self.maybe_rebuild_vector_index().await {

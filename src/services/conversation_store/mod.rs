@@ -15,6 +15,7 @@ use lancedb::index::Index;
 use once_cell::sync::OnceCell;
 
 use crate::{Conversation, Message, MessageRole, MessageStatus};
+use crate::services::vector_store::lancedb_store::LanceDbStore;
 use rust_i18n::t;
 
 const TABLE_NAME: &str = "conversations";
@@ -77,19 +78,6 @@ fn log_migration_start(missing: &[(String, String)]) {
     }
 }
 
-/// 按字符截断字符串，避免 UTF-8 边界切割。
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let end = s.char_indices()
-            .nth(max_chars)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
-        format!("{}…", &s[..end])
-    }
-}
-
 static STORE: OnceCell<ConversationStore> = OnceCell::new();
 
 pub fn init_store(store: ConversationStore) -> anyhow::Result<()> {
@@ -126,6 +114,100 @@ pub struct ConversationStore {
     db: lancedb::Connection,
     table: Option<lancedb::Table>,
     vector_store: std::sync::RwLock<Option<Arc<dyn crate::services::vector_store::VectorStore>>>,
+}
+
+// ── 摘要聚合辅助类型（模块级，避免被 cargo-crap 计入主函数 CC） ──
+
+/// 从 RecordBatch 提取摘要所需的列引用。
+struct SummaryColumns<'a> {
+    conv_ids: &'a StringArray,
+    titles: &'a StringArray,
+    created_ats: &'a StringArray,
+    updated_ats: &'a StringArray,
+    msg_ids: Option<&'a StringArray>,
+    roles: Option<&'a StringArray>,
+    contents: Option<&'a StringArray>,
+    timestamps: Option<&'a StringArray>,
+}
+
+fn extract_summary_columns(batch: &RecordBatch) -> Option<SummaryColumns<'_>> {
+    let conv_ids = batch.column_by_name("conversation_id")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+    let titles = batch.column_by_name("title")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+    let created_ats = batch.column_by_name("created_at")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+    let updated_ats = batch.column_by_name("updated_at")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+    Some(SummaryColumns {
+        msg_ids: batch.column_by_name("message_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+        roles: batch.column_by_name("role")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+        contents: batch.column_by_name("content")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+        timestamps: batch.column_by_name("timestamp")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>()),
+        conv_ids,
+        titles,
+        created_ats,
+        updated_ats,
+    })
+}
+
+/// 摘要聚合过程中的中间状态。
+struct SummaryState {
+    title: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    message_count: usize,
+    last_assistant_content: String,
+    last_assistant_time: DateTime<Utc>,
+}
+
+fn track_assistant_message(
+    entry: &mut SummaryState,
+    cols: &SummaryColumns<'_>,
+    i: usize,
+) {
+    let (Some(roles), Some(contents), Some(timestamps)) = (cols.roles, cols.contents, cols.timestamps) else {
+        return;
+    };
+    if roles.value(i) != "Assistant" {
+        return;
+    }
+    let ts = DateTime::parse_from_rfc3339(timestamps.value(i))
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_default();
+    if ts > entry.last_assistant_time {
+        entry.last_assistant_content = contents.value(i).to_string();
+        entry.last_assistant_time = ts;
+    }
+}
+
+fn update_summary_entry(
+    entry: &mut SummaryState,
+    cols: &SummaryColumns<'_>,
+    i: usize,
+) {
+    let row_updated_at = DateTime::parse_from_rfc3339(cols.updated_ats.value(i))
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_default();
+
+    if row_updated_at > entry.updated_at {
+        entry.updated_at = row_updated_at;
+        entry.title = cols.titles.value(i).to_string();
+    }
+
+    // 跳过 __empty 占位行
+    if let Some(msg_ids) = cols.msg_ids {
+        if LanceDbStore::should_skip_empty_message(msg_ids.value(i)) {
+            return;
+        }
+    }
+
+    entry.message_count += 1;
+    track_assistant_message(entry, cols, i);
 }
 
 impl ConversationStore {
@@ -732,83 +814,27 @@ impl ConversationStore {
 
     /// 从 RecordBatch 批次聚合对话摘要（按 updated_at 降序）。
     pub fn aggregate_summary_from_batches(batches: &[RecordBatch]) -> Vec<ConversationSummary> {
-        struct SummaryState {
-            title: String,
-            created_at: DateTime<Utc>,
-            updated_at: DateTime<Utc>,
-            message_count: usize,
-            last_assistant_content: String,
-            last_assistant_time: DateTime<Utc>,
-        }
 
         let mut state_map: std::collections::HashMap<String, SummaryState> = std::collections::HashMap::new();
 
         for batch in batches {
-            let conv_ids = batch.column_by_name("conversation_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let titles = batch.column_by_name("title")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let created_ats = batch.column_by_name("created_at")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let updated_ats = batch.column_by_name("updated_at")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let msg_ids = batch.column_by_name("message_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let roles = batch.column_by_name("role")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let contents = batch.column_by_name("content")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let timestamps = batch.column_by_name("timestamp")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let Some(cols) = extract_summary_columns(batch) else { continue };
 
-            let Some(conv_ids) = conv_ids else { continue };
-            let Some(titles) = titles else { continue };
-            let Some(created_ats) = created_ats else { continue };
-            let Some(updated_ats) = updated_ats else { continue };
-
-            for i in 0..conv_ids.len() {
-                let conv_id = conv_ids.value(i).to_string();
-                let row_updated_at = DateTime::parse_from_rfc3339(updated_ats.value(i))
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_default();
-
+            for i in 0..cols.conv_ids.len() {
+                let conv_id = cols.conv_ids.value(i).to_string();
                 let entry = state_map.entry(conv_id.clone()).or_insert_with(|| SummaryState {
-                    title: titles.value(i).to_string(),
-                    created_at: DateTime::parse_from_rfc3339(created_ats.value(i))
+                    title: cols.titles.value(i).to_string(),
+                    created_at: DateTime::parse_from_rfc3339(cols.created_ats.value(i))
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_default(),
-                    updated_at: row_updated_at,
+                    updated_at: DateTime::parse_from_rfc3339(cols.updated_ats.value(i))
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or_default(),
                     message_count: 0,
                     last_assistant_content: String::new(),
                     last_assistant_time: DateTime::default(),
                 });
-
-                if row_updated_at > entry.updated_at {
-                    entry.updated_at = row_updated_at;
-                    entry.title = titles.value(i).to_string();
-                }
-
-                // 跳过 __empty 占位行
-                if let Some(msg_ids) = msg_ids {
-                    if msg_ids.value(i).ends_with("__empty") {
-                        continue;
-                    }
-                }
-
-                entry.message_count += 1;
-
-                // 追踪最新助手消息
-                if let (Some(roles), Some(contents), Some(timestamps)) = (roles, contents, timestamps) {
-                    if roles.value(i) == "Assistant" {
-                        let ts = DateTime::parse_from_rfc3339(timestamps.value(i))
-                            .map(|dt| dt.with_timezone(&Utc))
-                            .unwrap_or_default();
-                        if ts > entry.last_assistant_time {
-                            entry.last_assistant_content = contents.value(i).to_string();
-                            entry.last_assistant_time = ts;
-                        }
-                    }
-                }
+                update_summary_entry(entry, &cols, i);
             }
         }
 
@@ -820,7 +846,7 @@ impl ConversationStore {
                 created_at: s.created_at,
                 updated_at: s.updated_at,
                 message_count: s.message_count,
-                last_assistant_snippet: truncate_str(&s.last_assistant_content, ASSISTANT_SNIPPET_MAX_LEN),
+                last_assistant_snippet: LanceDbStore::truncate_snippet(&s.last_assistant_content, ASSISTANT_SNIPPET_MAX_LEN),
             })
             .collect();
 
@@ -1118,7 +1144,7 @@ impl ConversationStore {
         }
 
         let qa_text = Self::format_qa_text(hit);
-        let snippet = Self::truncate_snippet(&qa_text, 200);
+        let snippet = LanceDbStore::truncate_snippet(&qa_text, 200);
 
         let timestamp = DateTime::parse_from_rfc3339(&hit.timestamp)
             .map(|dt| dt.with_timezone(&Utc))
@@ -1207,6 +1233,46 @@ impl ConversationStore {
         Ok(Self::extract_turns_from_batches(&batches))
     }
 
+    /// 从单个 RecordBatch 中提取消息所需的 5 列，若任一列缺失则返回 None。
+    fn extract_message_columns(
+        batch: &RecordBatch,
+    ) -> Option<(&StringArray, &StringArray, &StringArray, &StringArray, &StringArray)> {
+        let conv_ids = batch.column_by_name("conversation_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        let msg_ids = batch.column_by_name("message_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        let roles = batch.column_by_name("role")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        let contents = batch.column_by_name("content")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        let timestamps = batch.column_by_name("timestamp")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        Some((conv_ids, msg_ids, roles, contents, timestamps))
+    }
+
+    /// 将按会话分组的消息 HashMap 转换为 RawTurn 列表。
+    fn build_raw_turns_from_pairs(
+        conv_messages: &std::collections::HashMap<String, Vec<(String, String, String, String)>>,
+    ) -> Vec<crate::services::vector_store::lancedb_store::RawTurn> {
+        let mut turns = Vec::new();
+        for (conv_id, msgs) in conv_messages {
+            let pairs = crate::services::vector_store::lancedb_store::LanceDbStore::pair_user_assistant_messages(msgs);
+            for pair in pairs {
+                turns.push(crate::services::vector_store::lancedb_store::RawTurn {
+                    id: format!("{}:{}", pair.user_msg_id, pair.assistant_msg_id),
+                    conversation_id: conv_id.clone(),
+                    user_message_id: pair.user_msg_id,
+                    assistant_message_id: pair.assistant_msg_id,
+                    turn_index: 0,
+                    user_content: pair.user_content,
+                    assistant_content: pair.assistant_content,
+                    timestamp: pair.timestamp,
+                });
+            }
+        }
+        turns
+    }
+
     /// 直接从 RecordBatch 批次中流式提取 turn 对。
     ///
     /// 按 conversation_id 分组后，在每组内按顺序配对 User→Assistant 消息，
@@ -1218,26 +1284,13 @@ impl ConversationStore {
         let mut conv_messages: HashMap<String, Vec<(String, String, String, String)>> = HashMap::new();
 
         for batch in batches {
-            let conv_ids = batch.column_by_name("conversation_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let msg_ids = batch.column_by_name("message_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let roles = batch.column_by_name("role")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let contents = batch.column_by_name("content")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let timestamps = batch.column_by_name("timestamp")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-
-            let Some(conv_ids) = conv_ids else { continue };
-            let Some(msg_ids) = msg_ids else { continue };
-            let Some(roles) = roles else { continue };
-            let Some(contents) = contents else { continue };
-            let Some(timestamps) = timestamps else { continue };
+            let Some((conv_ids, msg_ids, roles, contents, timestamps)) = Self::extract_message_columns(batch) else {
+                continue;
+            };
 
             for i in 0..conv_ids.len() {
                 let msg_id = msg_ids.value(i);
-                if msg_id.ends_with("__empty") {
+                if LanceDbStore::should_skip_empty_message(msg_id) {
                     continue;
                 }
 
@@ -1252,41 +1305,7 @@ impl ConversationStore {
             }
         }
 
-        // 在每个 conversation 内按顺序配对 User → Assistant
-        let mut turns = Vec::new();
-        for (conv_id, msgs) in &conv_messages {
-            let mut i = 0;
-            while i < msgs.len() {
-                if msgs[i].1 != "User" {
-                    i += 1;
-                    continue;
-                }
-                let (uid, _, ucontent, _) = &msgs[i];
-
-                let aidxt = i + 1;
-                if aidxt < msgs.len() && msgs[aidxt].1 == "Assistant" {
-                    let (aid, _, acontent, ats) = &msgs[aidxt];
-                    if acontent.trim().is_empty() {
-                        i = aidxt + 1;
-                        continue;
-                    }
-                    turns.push(crate::services::vector_store::lancedb_store::RawTurn {
-                        id: format!("{}:{}", uid, aid),
-                        conversation_id: conv_id.clone(),
-                        user_message_id: uid.clone(),
-                        assistant_message_id: aid.clone(),
-                        turn_index: 0,
-                        user_content: ucontent.clone(),
-                        assistant_content: acontent.clone(),
-                        timestamp: ats.clone(),
-                    });
-                    i = aidxt + 1;
-                } else {
-                    i += 1;
-                }
-            }
-        }
-
+        let turns = Self::build_raw_turns_from_pairs(&conv_messages);
         eprintln!("[xechat] extract_turns_from_batches: {} convs -> {} turns", conv_messages.len(), turns.len());
         turns
     }

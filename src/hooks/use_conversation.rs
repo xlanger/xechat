@@ -30,7 +30,7 @@ pub fn use_conversation() -> ConversationStore {
 /// 新创建并注入 Context 的 [`ConversationStore`] 实例
 pub fn use_conversation_provider() -> ConversationStore {
     let store = use_context_provider(ConversationStore::new);
-    let mut ui_store = crate::hooks::use_ui();
+    let ui_store = crate::hooks::use_ui();
 
     let provider_store = store.clone();
     use_effect(move || {

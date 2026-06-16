@@ -60,7 +60,7 @@ fn timezone_options() -> Vec<(String, String)> {
 pub fn GeneralSection() -> Element {
     let mut app_store = use_app();
     let mut ui_store = crate::hooks::use_ui();
-    let mut conv_store = crate::hooks::use_conversation();
+    let conv_store = crate::hooks::use_conversation();
 
     // Ollama 探测结果缓存
     let mut ollama_models: Signal<Vec<String>> = use_signal(Vec::new);
@@ -182,7 +182,7 @@ pub fn GeneralSection() -> Element {
     // 切换嵌入提供商时触发 Ollama 探测
     let on_select_embed_provider = {
         let mut ollama_embed_models = ollama_embed_models;
-        let mut conv_for_provider = conv_store.clone();
+        let conv_for_provider = conv_store.clone();
         move |v: String| {
             let is_ollama = v == "ollama";
             app_store.update_config(|config| {
@@ -342,7 +342,7 @@ pub fn GeneralSection() -> Element {
                         };
                         rsx! {
                             {
-                                let mut conv_for_model = conv_store.clone();
+                                let conv_for_model = conv_store.clone();
                                 rsx! {
                             CustomSelect {
                                 options: embed_model_opts,
@@ -448,7 +448,7 @@ pub fn GeneralSection() -> Element {
                                             let mut mr = model_ready;
                                             let mut md = model_downloading;
                                             let mut me = model_error;
-                                            let mut conv_for_dl = conv_for_download.clone();
+                                            let conv_for_dl = conv_for_download.clone();
                                             spawn(async move {
                                                 while let Some(p) = rx.recv().await {
                                                     match p {

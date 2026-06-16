@@ -9,23 +9,23 @@ use xechat::services::vector_store::lancedb_store::LanceDbStore;
 fn test_needs_initial_index_not_built_below_threshold() {
     assert!(!LanceDbStore::needs_initial_index(false, 0));
     assert!(!LanceDbStore::needs_initial_index(false, 500));
-    assert!(!LanceDbStore::needs_initial_index(false, 999));
+    assert!(!LanceDbStore::needs_initial_index(false, 9999));
 }
 
 #[test]
 fn test_needs_initial_index_not_built_at_threshold() {
-    assert!(LanceDbStore::needs_initial_index(false, 1000));
+    assert!(LanceDbStore::needs_initial_index(false, 10000));
 }
 
 #[test]
 fn test_needs_initial_index_not_built_above_threshold() {
-    assert!(LanceDbStore::needs_initial_index(false, 2000));
+    assert!(LanceDbStore::needs_initial_index(false, 20000));
 }
 
 #[test]
 fn test_needs_initial_index_already_built() {
-    assert!(!LanceDbStore::needs_initial_index(true, 1000));
-    assert!(!LanceDbStore::needs_initial_index(true, 5000));
+    assert!(!LanceDbStore::needs_initial_index(true, 10000));
+    assert!(!LanceDbStore::needs_initial_index(true, 50000));
 }
 
 // ── needs_rebuild ───────────────────────────────────────────────────
@@ -33,30 +33,30 @@ fn test_needs_initial_index_already_built() {
 #[test]
 fn test_needs_rebuild_not_built() {
     // If index was never built, should not rebuild (needs_initial_index handles that)
-    assert!(!LanceDbStore::needs_rebuild(false, 2000, 1000, 0, 100));
+    assert!(!LanceDbStore::needs_rebuild(false, 20000, 10000, 0, 100));
 }
 
 #[test]
 fn test_needs_rebuild_no_growth() {
     let now = 1000000;
     let last_time = now - 100; // within min interval
-    assert!(!LanceDbStore::needs_rebuild(true, 1000, 1000, last_time, now));
+    assert!(!LanceDbStore::needs_rebuild(true, 10000, 10000, last_time, now));
 }
 
 #[test]
 fn test_needs_rebuild_significant_growth_within_min_interval() {
     let now = 1000000;
     let last_time = now - 100; // less than VECTOR_INDEX_REBUILD_MIN_SECS
-    // Growth: (1200 - 1000) * 100 / 1000 = 20% >= 10%
-    assert!(!LanceDbStore::needs_rebuild(true, 1200, 1000, last_time, now));
+    // Growth: (12000 - 10000) * 100 / 10000 = 20% >= 10%
+    assert!(!LanceDbStore::needs_rebuild(true, 12000, 10000, last_time, now));
 }
 
 #[test]
 fn test_needs_rebuild_significant_growth_after_min_interval() {
     let now = 1000000;
     let last_time = now - 7 * 3600; // > VECTOR_INDEX_REBUILD_MIN_SECS (6 hours)
-    // Growth: (1200 - 1000) * 100 / 1000 = 20% >= 10%
-    assert!(LanceDbStore::needs_rebuild(true, 1200, 1000, last_time, now));
+    // Growth: (12000 - 10000) * 100 / 10000 = 20% >= 10%
+    assert!(LanceDbStore::needs_rebuild(true, 12000, 10000, last_time, now));
 }
 
 #[test]
@@ -64,15 +64,15 @@ fn test_needs_rebuild_force_after_max_interval() {
     let now = 1000000;
     let last_time = now - 25 * 3600; // > VECTOR_INDEX_REBUILD_MAX_SECS (24 hours)
     // Even with no growth
-    assert!(LanceDbStore::needs_rebuild(true, 1000, 1000, last_time, now));
+    assert!(LanceDbStore::needs_rebuild(true, 10000, 10000, last_time, now));
 }
 
 #[test]
 fn test_needs_rebuild_small_growth_after_min_interval() {
     let now = 1000000;
     let last_time = now - 7 * 3600;
-    // Growth: (1050 - 1000) * 100 / 1000 = 5% < 10%
-    assert!(!LanceDbStore::needs_rebuild(true, 1050, 1000, last_time, now));
+    // Growth: (10500 - 10000) * 100 / 10000 = 5% < 10%
+    assert!(!LanceDbStore::needs_rebuild(true, 10500, 10000, last_time, now));
 }
 
 #[test]

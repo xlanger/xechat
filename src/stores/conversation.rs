@@ -633,6 +633,112 @@ impl ConversationStore {
         rebuilt
     }
 
+    /// 打开 LanceDbStore 并确保表存在，用于重嵌入任务。
+    pub async fn open_store_for_reembed(lancedb_path: &str) -> anyhow::Result<crate::services::vector_store::lancedb_store::LanceDbStore> {
+        let mut vs = crate::services::vector_store::lancedb_store::LanceDbStore::open(lancedb_path).await?;
+        vs.ensure_table().await?;
+        match vs.count_turns_rows().await {
+            Ok(n) => eprintln!("[xechat] spawn_reembed: after ensure_table, row_count={}", n),
+            Err(e) => eprintln!("[xechat] spawn_reembed: failed to count rows: {}", e),
+        }
+        Ok(vs)
+    }
+
+    /// 从对话存储加载轮次数据，用于重嵌入任务。
+    pub async fn load_turns_for_reembed() -> anyhow::Result<Vec<crate::services::vector_store::lancedb_store::RawTurn>> {
+        let store = crate::services::conversation_store::get_store()
+            .ok_or_else(|| anyhow::anyhow!("no conversation store available"))?;
+        let turns = store.load_all_turns_from_conversations().await?;
+        eprintln!("[xechat] Extracted {} turns from conversations", turns.len());
+        Ok(turns)
+    }
+
+    /// 重嵌入完成后更新全局 vector_store 和 memory pipeline。
+    pub fn update_global_store_after_reembed(vs: crate::services::vector_store::lancedb_store::LanceDbStore) {
+        let new_vs: std::sync::Arc<dyn crate::services::vector_store::VectorStore> =
+            std::sync::Arc::new(vs);
+        crate::services::conversation_store::update_vector_store(Some(new_vs.clone()));
+        if let Some(embedder) = crate::services::embedder::get_embedder() {
+            let pipeline = crate::services::memory::MemoryPipeline::new(embedder, new_vs);
+            if let Err(e) = crate::services::memory::init_pipeline(pipeline) {
+                eprintln!("[xechat] Failed to update memory pipeline after re-embed: {}", e);
+            }
+        }
+        eprintln!("[xechat] Global vector_store and memory pipeline updated after re-embed");
+    }
+
+    /// 处理重嵌入结果：日志输出 + 更新全局 store。
+    fn handle_reembed_result(
+        result: anyhow::Result<(usize, usize)>,
+        vs: crate::services::vector_store::lancedb_store::LanceDbStore,
+    ) {
+        match result {
+            Ok((success, skipped)) => {
+                if skipped > 0 {
+                    eprintln!("[xechat] Re-embed partial: {} succeeded, {} skipped", success, skipped);
+                } else {
+                    eprintln!("[xechat] Re-embed completed successfully ({} turns)", success);
+                }
+                Self::update_global_store_after_reembed(vs);
+            }
+            Err(e) => eprintln!("[xechat] Re-embed failed: {}", e),
+        }
+    }
+
+    /// 执行重嵌入核心逻辑：获取 embedder → 打开 store → 加载 turns → reembed → 处理结果。
+    ///
+    /// 函数退出前统一发送 `ReembedEvent::Done`。
+    async fn run_reembed_core(
+        lancedb_path: String,
+        force_rebuild: bool,
+        tx: tokio::sync::mpsc::Sender<ReembedEvent>,
+    ) {
+        let embedder = match crate::services::embedder::get_embedder() {
+            Some(e) => e,
+            None => {
+                eprintln!("[xechat] Re-embed failed: no embedder available");
+                let _ = tx.send(ReembedEvent::Done).await;
+                return;
+            }
+        };
+
+        let vs = match Self::open_store_for_reembed(&lancedb_path).await {
+            Ok(vs) => {
+                eprintln!("[xechat] spawn_reembed: LanceDbStore opened, dim={}", vs.vector_dim());
+                vs
+            }
+            Err(e) => {
+                eprintln!("[xechat] Re-embed failed: {}", e);
+                let _ = tx.send(ReembedEvent::Done).await;
+                return;
+            }
+        };
+
+        let raw_turns = match Self::load_turns_for_reembed().await {
+            Ok(t) if !t.is_empty() => t,
+            Ok(_) => {
+                eprintln!("[xechat] No turns to re-embed");
+                let _ = tx.send(ReembedEvent::Done).await;
+                return;
+            }
+            Err(e) => {
+                eprintln!("[xechat] Re-embed failed: {}", e);
+                let _ = tx.send(ReembedEvent::Done).await;
+                return;
+            }
+        };
+
+        let tx_progress = tx.clone();
+        let result = vs
+            .reembed_turns(raw_turns, &embedder, &|current, total| {
+                let _ = tx_progress.try_send(ReembedEvent::Progress(current, total));
+            }, force_rebuild)
+            .await;
+
+        let _ = tx.send(ReembedEvent::Done).await;
+        Self::handle_reembed_result(result, vs);
+    }
+
     /// 启动异步重嵌入任务。
     ///
     /// 显示重建进度遮罩，逐条用新 embedder 重新分块和嵌入，
@@ -669,101 +775,7 @@ impl ConversationStore {
         });
 
         // 实际重嵌入：tokio::spawn 中执行
-        tokio::spawn(async move {
-            let embedder = match crate::services::embedder::get_embedder() {
-                Some(e) => e,
-                None => {
-                    eprintln!("[xechat] Re-embed failed: no embedder available");
-                    let _ = tx.send(ReembedEvent::Done).await;
-                    return;
-                }
-            };
-
-            // 重新打开 LanceDbStore，避免借用 ConversationStore 的 RwLock
-            let mut vs = match crate::services::vector_store::lancedb_store::LanceDbStore::open(&lancedb_path).await {
-                Ok(vs) => {
-                    eprintln!("[xechat] spawn_reembed: LanceDbStore opened, dim={}", vs.vector_dim());
-                    vs
-                }
-                Err(e) => {
-                    eprintln!("[xechat] Re-embed failed: cannot open LanceDbStore: {}", e);
-                    let _ = tx.send(ReembedEvent::Done).await;
-                    return;
-                }
-            };
-
-            if let Err(e) = vs.ensure_table().await {
-                eprintln!("[xechat] Re-embed failed: cannot ensure table: {}", e);
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
-            // 诊断：ensure_table 后的表状态
-            match vs.count_turns_rows().await {
-                Ok(n) => eprintln!("[xechat] spawn_reembed: after ensure_table, row_count={}", n),
-                Err(e) => eprintln!("[xechat] spawn_reembed: failed to count rows: {}", e),
-            }
-
-            // 重建时始终从对话消息提取轮次，因为对话表才是数据源，
-            // 旧 turns 表的数据可能不完整（如之前嵌入器异常导致部分轮次未写入）
-            let raw_turns = {
-                let store = match crate::services::conversation_store::get_store() {
-                    Some(s) => s,
-                    None => {
-                        eprintln!("[xechat] Re-embed failed: no conversation store available");
-                        let _ = tx.send(ReembedEvent::Done).await;
-                        return;
-                    }
-                };
-                match store.load_all_turns_from_conversations().await {
-                    Ok(turns) => {
-                        eprintln!("[xechat] Extracted {} turns from conversations", turns.len());
-                        turns
-                    }
-                    Err(e) => {
-                        eprintln!("[xechat] Re-embed failed: cannot load conversations: {}", e);
-                        let _ = tx.send(ReembedEvent::Done).await;
-                        return;
-                    }
-                }
-            };
-
-            if raw_turns.is_empty() {
-                eprintln!("[xechat] No turns to re-embed");
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
-
-            let tx_progress = tx.clone();
-            let result = vs.reembed_turns(raw_turns, &embedder, &|current, total| {
-                let _ = tx_progress.try_send(ReembedEvent::Progress(current, total));
-            }, force_rebuild).await;
-
-            let _ = tx.send(ReembedEvent::Done).await;
-
-            match result {
-                Ok((success, skipped)) => {
-                    if skipped > 0 {
-                        eprintln!("[xechat] Re-embed partial: {} succeeded, {} skipped (retry to continue)", success, skipped);
-                    } else {
-                        eprintln!("[xechat] Re-embed completed successfully ({} turns)", success);
-                    }
-                    // 无论部分成功还是全部成功，都更新全局 vector_store
-                    // 已写入的数据立即可用于搜索，未完成的 turn 下次重建时自动跳过
-                    let new_vs: std::sync::Arc<dyn crate::services::vector_store::VectorStore> =
-                        std::sync::Arc::new(vs);
-                    crate::services::conversation_store::update_vector_store(Some(new_vs.clone()));
-                    // 同步更新 memory pipeline，使其使用新的 vector_store
-                    if let Some(embedder) = crate::services::embedder::get_embedder() {
-                        let pipeline = crate::services::memory::MemoryPipeline::new(embedder, new_vs);
-                        if let Err(e) = crate::services::memory::init_pipeline(pipeline) {
-                            eprintln!("[xechat] Failed to update memory pipeline after re-embed: {}", e);
-                        }
-                    }
-                    eprintln!("[xechat] Global vector_store and memory pipeline updated after re-embed");
-                }
-                Err(e) => eprintln!("[xechat] Re-embed failed: {}", e),
-            }
-        });
+        tokio::spawn(Self::run_reembed_core(lancedb_path, force_rebuild, tx));
     }
 
     /// 初始化向量存储（turns 表），仅在 embedder 就绪时创建。

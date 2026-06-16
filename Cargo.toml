@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "xechat"
-version = "0.1.3"
+version = "0.1.5"
 description = "XEChat - Desktop AI Chat Client"
 authors = ["xlanger"]
 edition = "2024"
@@ -325,6 +325,18 @@ path = "tests/services/ai/ollama_stream_helpers_test.rs"
 [[test]]
 name = "services_ai_openai_stream_helpers_test"
 path = "tests/services/ai/openai_stream_helpers_test.rs"
+
+[[test]]
+name = "services_qwen3_embed_test"
+path = "tests/services/qwen3_embed_test.rs"
+
+[[test]]
+name = "services_vector_store_crap_test"
+path = "tests/services/vector_store_crap_test.rs"
+
+[[test]]
+name = "services_crap_refactor_test"
+path = "tests/services/crap_refactor_test.rs"
 
 [patch.crates-io]
 embellama = { path = ".cargo/patch/embellama" }
