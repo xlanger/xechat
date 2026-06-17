@@ -2968,6 +2968,8 @@ checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 [[package]]
 name = "embellama"
 version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7724443a1f37a0747e0c468bc0d53fb9d88834c3ba6a4ef239e855131a33818"
 dependencies = [
  "anyhow",
  "byteorder",
@@ -10670,7 +10672,7 @@ checksum = "2fb433233f2df9344722454bc7e96465c9d03bff9d77c248f9e7523fe79585b5"
 
 [[package]]
 name = "xechat"
-version = "0.1.3"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "arrow-array",

@@ -338,6 +338,3 @@ path = "tests/services/vector_store_crap_test.rs"
 name = "services_crap_refactor_test"
 path = "tests/services/crap_refactor_test.rs"
 
-[patch.crates-io]
-embellama = { path = ".cargo/patch/embellama" }
-
