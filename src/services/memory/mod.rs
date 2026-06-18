@@ -46,24 +46,13 @@ impl MemoryPipeline {
         }
     }
 
-    pub async fn preprocess(&self, user_input: &str, recent_messages: &[Message]) -> PreprocessResult {
-        let intent = self.intent_analyzer.analyze(user_input, recent_messages);
-
-        if !intent.needs_memory {
-            return PreprocessResult {
-                enhanced_messages: Vec::new(),
-                memory_used: false,
-            };
-        }
-
-        let query_vector = match self.embedder.encode_query(&intent.memory_query).await {
+    /// 执行记忆检索阶段：编码查询、搜索、去重。
+    async fn run_preprocess_search(&self, query: &str) -> Vec<crate::models::memory::SearchHit> {
+        let query_vector = match self.embedder.encode_query(query).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!("[xechat] Embed query failed: {}", e);
-                return PreprocessResult {
-                    enhanced_messages: Vec::new(),
-                    memory_used: false,
-                };
+                return Vec::new();
             }
         };
 
@@ -73,18 +62,13 @@ impl MemoryPipeline {
 
         // 按 conversation_id 去重，保留最高分
         let mut seen_conv: HashSet<String> = HashSet::new();
-        let hits: Vec<crate::models::memory::SearchHit> = hits
-            .into_iter()
+        hits.into_iter()
             .filter(|hit| seen_conv.insert(hit.conversation_id.clone()))
-            .collect();
+            .collect()
+    }
 
-        if hits.is_empty() {
-            return PreprocessResult {
-                enhanced_messages: Vec::new(),
-                memory_used: false,
-            };
-        }
-
+    /// 将搜索结果格式化为记忆提示文本。
+    fn format_memory_text(hits: &[crate::models::memory::SearchHit]) -> String {
         let mut memory_text = MEMORY_SYSTEM_PROMPT.to_string();
         for (i, hit) in hits.iter().enumerate() {
             let qa_text = if !hit.user_content.is_empty() {
@@ -114,6 +98,29 @@ impl MemoryPipeline {
             ));
         }
         memory_text.push_str(MEMORY_FOOTER);
+        memory_text
+    }
+
+    pub async fn preprocess(&self, user_input: &str, recent_messages: &[Message]) -> PreprocessResult {
+        let intent = self.intent_analyzer.analyze(user_input, recent_messages);
+
+        if !intent.needs_memory {
+            return PreprocessResult {
+                enhanced_messages: Vec::new(),
+                memory_used: false,
+            };
+        }
+
+        let hits = self.run_preprocess_search(&intent.memory_query).await;
+
+        if hits.is_empty() {
+            return PreprocessResult {
+                enhanced_messages: Vec::new(),
+                memory_used: false,
+            };
+        }
+
+        let memory_text = Self::format_memory_text(&hits);
 
         let enhanced_messages = vec![
             ChatMessage {
@@ -128,43 +135,36 @@ impl MemoryPipeline {
         }
     }
 
-    /// 助手回复完成后，与缓存的用户消息配对，聚合写入轮次向量。
-    pub async fn postprocess(
-        &self,
-        conv_id: &str,
-        assistant_msg_id: &str,
-        assistant_content: &str,
-    ) -> anyhow::Result<()> {
-        // 取出缓存的用户消息
+    /// 取出缓存的用户消息，返回 (user_msg_id, user_content)。
+    fn take_pending_user(&self, conv_id: &str) -> (String, String) {
         let user_info = if let Ok(mut pending) = self.pending_user.lock() {
             pending.remove(conv_id)
         } else {
             None
         };
+        user_info.unwrap_or_default()
+    }
 
-        let (user_msg_id, user_content) = user_info.unwrap_or_default();
-
-        // 合并轮次文本
-        let turn_text = format!("用户：{}\n助手：{}", user_content, assistant_content);
-
-        // 编码轮次文本
+    /// 编码轮次文本为分块向量。
+    async fn encode_turn_chunks(
+        &self,
+        turn_text: &str,
+        chunk_params: &crate::services::embedder::ChunkParams,
+    ) -> anyhow::Result<Vec<crate::models::memory::ChunkMeta>> {
         let char_count = turn_text.chars().count();
-        let chunk_params = crate::services::embedder::ChunkParams::from_context_window(
-            self.embedder.context_window()
-        );
-        let chunks = if char_count < chunk_params.target_chars {
+        if char_count < chunk_params.target_chars {
             // 短文本：整条编码
-            let embedding = self.embedder.encode_passage(&turn_text).await?;
-            vec![crate::models::memory::ChunkMeta {
+            let embedding = self.embedder.encode_passage(turn_text).await?;
+            Ok(vec![crate::models::memory::ChunkMeta {
                 chunk_index: 0,
-                chunk_text: turn_text.clone(),
+                chunk_text: turn_text.to_string(),
                 start_char: 0,
                 end_char: turn_text.len() as u32,
                 embedding,
-            }]
+            }])
         } else {
             // 长文本：语义分块编码
-            let spans = crate::services::embedder::manager::semantic_chunk(&turn_text, chunk_params);
+            let spans = crate::services::embedder::manager::semantic_chunk(turn_text, *chunk_params);
             let mut chunk_metas = Vec::with_capacity(spans.len());
             for (i, span) in spans.iter().enumerate() {
                 let embedding = self.embedder.encode_passage(&span.text).await?;
@@ -176,8 +176,27 @@ impl MemoryPipeline {
                     embedding,
                 });
             }
-            chunk_metas
-        };
+            Ok(chunk_metas)
+        }
+    }
+
+    /// 助手回复完成后，与缓存的用户消息配对，聚合写入轮次向量。
+    pub async fn postprocess(
+        &self,
+        conv_id: &str,
+        assistant_msg_id: &str,
+        assistant_content: &str,
+    ) -> anyhow::Result<()> {
+        let (user_msg_id, user_content) = self.take_pending_user(conv_id);
+
+        // 合并轮次文本
+        let turn_text = format!("用户：{}\n助手：{}", user_content, assistant_content);
+
+        // 编码轮次文本
+        let chunk_params = crate::services::embedder::ChunkParams::from_context_window(
+            self.embedder.context_window()
+        );
+        let chunks = self.encode_turn_chunks(&turn_text, &chunk_params).await?;
 
         let entry = crate::models::memory::TurnEntry {
             id: uuid::Uuid::new_v4().to_string(),

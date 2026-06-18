@@ -128,68 +128,86 @@ impl LanceDbStore {
 
     /// 从已有表的 schema 中检测向量列维度。
     async fn detect_vector_dim_from_table(table: &lancedb::Table) -> i32 {
-        match table.schema().await {
-            Ok(schema) => {
-                for field in schema.fields() {
-                    if field.name() == "vector" {
-                        if let arrow_schema::DataType::FixedSizeList(_, dim) = field.data_type() {
-                            return *dim;
-                        }
-                    }
+        match Self::query_table_schema(table).await {
+            Some(schema) => Self::extract_dim_from_schema(&schema).unwrap_or_else(Self::resolve_vector_dim),
+            None => Self::resolve_vector_dim(),
+        }
+    }
+
+    /// 查询表的 schema，失败时返回 None。
+    async fn query_table_schema(table: &lancedb::Table) -> Option<arrow_schema::SchemaRef> {
+        table.schema().await.ok()
+    }
+
+    /// 从 schema 中提取 vector 列的维度。
+    fn extract_dim_from_schema(schema: &arrow_schema::Schema) -> Option<i32> {
+        for field in schema.fields() {
+            if field.name() == "vector" {
+                if let arrow_schema::DataType::FixedSizeList(_, dim) = field.data_type() {
+                    return Some(*dim);
                 }
-                Self::resolve_vector_dim()
             }
-            Err(_) => Self::resolve_vector_dim(),
+        }
+        None
+    }
+
+    /// 创建 turns 表及索引（仅在表不存在时调用）。
+    async fn create_table_if_needed(&mut self) -> anyhow::Result<()> {
+        if self.turns_table.is_some() {
+            return Ok(());
+        }
+
+        let schema = Self::turns_arrow_schema(self.vector_dim);
+        let batch = RecordBatch::new_empty(schema);
+        let table = self
+            .db
+            .create_table(TURNS_TABLE_NAME, vec![batch])
+            .execute()
+            .await?;
+
+        Self::create_table_indexes(&table).await;
+        self.turns_table = Some(table);
+        Ok(())
+    }
+
+    /// 为新建的 turns 表创建全文搜索和标量索引。
+    async fn create_table_indexes(table: &lancedb::Table) {
+        // 创建全文搜索倒排索引（空表也可创建）
+        if let Err(e) = table
+            .create_index(&["chunk_text"], Index::FTS(Default::default()))
+            .execute()
+            .await
+        {
+            eprintln!("[xechat] Failed to create FTS index on turns.chunk_text: {}", e);
+        }
+
+        // 创建标量索引，加速按 conversation_id / assistant_message_id 过滤和删除
+        if let Err(e) = table
+            .create_index(&["conversation_id"], Index::BTree(Default::default()))
+            .execute()
+            .await
+        {
+            eprintln!("[xechat] Failed to create BTree index on turns.conversation_id: {}", e);
+        }
+        if let Err(e) = table
+            .create_index(&["assistant_message_id"], Index::BTree(Default::default()))
+            .execute()
+            .await
+        {
+            eprintln!("[xechat] Failed to create BTree index on turns.assistant_message_id: {}", e);
+        }
+        // id 列索引：add_turn upsert 时按 id 删除旧行需要
+        if let Err(e) = table
+            .create_index(&["id"], Index::BTree(Default::default()))
+            .execute()
+            .await
+        {
+            eprintln!("[xechat] Failed to create BTree index on turns.id: {}", e);
         }
     }
 
     pub async fn ensure_table(&mut self) -> anyhow::Result<()> {
-        if self.turns_table.is_none() {
-            let schema = Self::turns_arrow_schema(self.vector_dim);
-            let batch = RecordBatch::new_empty(schema);
-            let table = self
-                .db
-                .create_table(TURNS_TABLE_NAME, vec![batch])
-                .execute()
-                .await?;
-
-            // 创建全文搜索倒排索引（空表也可创建）
-            if let Err(e) = table
-                .create_index(&["chunk_text"], Index::FTS(Default::default()))
-                .execute()
-                .await
-            {
-                eprintln!("[xechat] Failed to create FTS index on turns.chunk_text: {}", e);
-            }
-
-            // 创建标量索引，加速按 conversation_id / assistant_message_id 过滤和删除
-            if let Err(e) = table
-                .create_index(&["conversation_id"], Index::BTree(Default::default()))
-                .execute()
-                .await
-            {
-                eprintln!("[xechat] Failed to create BTree index on turns.conversation_id: {}", e);
-            }
-            if let Err(e) = table
-                .create_index(&["assistant_message_id"], Index::BTree(Default::default()))
-                .execute()
-                .await
-            {
-                eprintln!("[xechat] Failed to create BTree index on turns.assistant_message_id: {}", e);
-            }
-            // id 列索引：add_turn upsert 时按 id 删除旧行需要
-            if let Err(e) = table
-                .create_index(&["id"], Index::BTree(Default::default()))
-                .execute()
-                .await
-            {
-                eprintln!("[xechat] Failed to create BTree index on turns.id: {}", e);
-            }
-
-            self.turns_table = Some(table);
-        }
-
-        Ok(())
+        self.create_table_if_needed().await
     }
 
     /// 删除旧 turns 表并重置状态，以便 `ensure_table` 用新维度重建。
@@ -241,30 +259,35 @@ impl LanceDbStore {
             name: embedder.name().to_string(),
             dimension: embedder.dimension() as i32,
         };
+        self.compare_embedder_info(&current)
+    }
+
+    /// 比较当前 embedder 与已记录的元数据。
+    fn compare_embedder_info(&self, current: &EmbedderMeta) -> Option<EmbedderMeta> {
         match self.read_embedder_meta() {
-            Some(saved) if saved == current => None,
+            Some(saved) if saved == *current => None,
             Some(saved) => {
                 eprintln!(
                     "[xechat] Embedder changed: saved={:?} current={:?}",
                     saved, current
                 );
-                Some(current)
+                Some(current.clone())
             }
-            None => {
-                // 首次运行或旧版本无元数据文件
-                // 如果 turns 表已有数据，需要重建（可能编码方式不同）
-                // 如果 turns 表为空，直接写入元数据即可
-                let has_data = self.turns_table.is_some();
-                if has_data {
-                    eprintln!(
-                        "[xechat] No embedder meta but turns table has data, triggering rebuild"
-                    );
-                    Some(current)
-                } else {
-                    self.write_embedder_meta(&current);
-                    None
-                }
-            }
+            None => self.handle_missing_meta(current),
+        }
+    }
+
+    /// 处理无元数据文件的情况：有数据则触发重建，无数据则写入元数据。
+    fn handle_missing_meta(&self, current: &EmbedderMeta) -> Option<EmbedderMeta> {
+        let has_data = self.turns_table.is_some();
+        if has_data {
+            eprintln!(
+                "[xechat] No embedder meta but turns table has data, triggering rebuild"
+            );
+            Some(current.clone())
+        } else {
+            self.write_embedder_meta(current);
+            None
         }
     }
 
@@ -324,6 +347,35 @@ impl LanceDbStore {
         dot / (norm_a * norm_b)
     }
 
+    /// 查找 User 消息后紧跟的 Assistant 消息，返回配对结果。
+    ///
+    /// 如果找到有效配对返回 `Some(pair)` 并推进索引到配对之后，
+    /// 否则返回 `None`，索引仅推进 1。
+    fn find_assistant_for_user(
+        msgs: &[(String, String, String, String)],
+        i: usize,
+    ) -> (Option<UserAssistantPair>, usize) {
+        let (uid, _, ucontent, _) = &msgs[i];
+
+        let aidxt = i + 1;
+        if aidxt < msgs.len() && msgs[aidxt].1 == "Assistant" {
+            let (aid, _, acontent, ats) = &msgs[aidxt];
+            if acontent.trim().is_empty() {
+                return (None, aidxt + 1);
+            }
+            let pair = UserAssistantPair {
+                user_msg_id: uid.clone(),
+                assistant_msg_id: aid.clone(),
+                user_content: ucontent.clone(),
+                assistant_content: acontent.clone(),
+                timestamp: ats.clone(),
+            };
+            (Some(pair), aidxt + 1)
+        } else {
+            (None, i + 1)
+        }
+    }
+
     /// 将消息列表配对为 User→Assistant 轮次。
     ///
     /// 从 `extract_turns_from_batches` (CRAP 110) 提取的核心配对逻辑。
@@ -341,26 +393,11 @@ impl LanceDbStore {
                 i += 1;
                 continue;
             }
-            let (uid, _, ucontent, _) = &msgs[i];
-
-            let aidxt = i + 1;
-            if aidxt < msgs.len() && msgs[aidxt].1 == "Assistant" {
-                let (aid, _, acontent, ats) = &msgs[aidxt];
-                if acontent.trim().is_empty() {
-                    i = aidxt + 1;
-                    continue;
-                }
-                pairs.push(UserAssistantPair {
-                    user_msg_id: uid.clone(),
-                    assistant_msg_id: aid.clone(),
-                    user_content: ucontent.clone(),
-                    assistant_content: acontent.clone(),
-                    timestamp: ats.clone(),
-                });
-                i = aidxt + 1;
-            } else {
-                i += 1;
+            let (pair, next_i) = Self::find_assistant_for_user(msgs, i);
+            if let Some(p) = pair {
+                pairs.push(p);
             }
+            i = next_i;
         }
         pairs
     }
@@ -419,37 +456,63 @@ impl LanceDbStore {
         turn_idx: usize,
         total: usize,
     ) -> anyhow::Result<Vec<crate::models::memory::ChunkMeta>> {
-        const MAX_ENCODE_RETRIES: u32 = 3;
-        const RETRY_DELAY_SECS: u64 = 2;
         let mut chunks = Vec::with_capacity(chunk_texts.len());
         for (ci, text) in chunk_texts.iter().enumerate() {
-            let mut last_err = None;
-            for retry in 0..MAX_ENCODE_RETRIES {
-                if retry > 0 {
-                    eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} retry {}/{}", turn_idx, total, ci + 1, chunk_texts.len(), retry, MAX_ENCODE_RETRIES);
-                    tokio::time::sleep(std::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
-                }
-                match embedder.encode_passage(text).await {
-                    Ok(embedding) => {
-                        chunks.push(crate::models::memory::ChunkMeta {
-                            chunk_index: chunk_indices[ci],
-                            chunk_text: text.clone(),
-                            start_char: chunk_starts[ci],
-                            end_char: chunk_ends[ci],
-                            embedding,
-                        });
-                        last_err = None;
-                        break;
-                    }
-                    Err(e) => { last_err = Some(e); }
-                }
-            }
-            if let Some(e) = last_err {
-                eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} encode FAILED after {} retries: {}", turn_idx, total, ci + 1, chunk_texts.len(), MAX_ENCODE_RETRIES, e);
-                return Err(e);
-            }
+            let chunk = Self::encode_single_chunk_with_retry(
+                embedder, text, chunk_indices[ci], chunk_starts[ci], chunk_ends[ci],
+                ci, chunk_texts.len(), turn_idx, total,
+            ).await?;
+            chunks.push(chunk);
         }
         Ok(chunks)
+    }
+
+    /// 编码单个分块，失败自动重试最多 MAX_ENCODE_RETRIES 次。
+    async fn encode_single_chunk_with_retry(
+        embedder: &Arc<dyn crate::services::embedder::Embedder>,
+        text: &str,
+        chunk_index: u32,
+        start_char: u32,
+        end_char: u32,
+        ci: usize,
+        chunk_count: usize,
+        turn_idx: usize,
+        total: usize,
+    ) -> anyhow::Result<crate::models::memory::ChunkMeta> {
+        const MAX_ENCODE_RETRIES: u32 = 3;
+        let mut last_err = None;
+        for retry in 0..MAX_ENCODE_RETRIES {
+            if Self::should_retry_encode(retry) {
+                eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} retry {}/{}", turn_idx, total, ci + 1, chunk_count, retry, MAX_ENCODE_RETRIES);
+                tokio::time::sleep(Self::compute_encode_backoff()).await;
+            }
+            match embedder.encode_passage(text).await {
+                Ok(embedding) => {
+                    return Ok(crate::models::memory::ChunkMeta {
+                        chunk_index,
+                        chunk_text: text.to_string(),
+                        start_char,
+                        end_char,
+                        embedding,
+                    });
+                }
+                Err(e) => { last_err = Some(e); }
+            }
+        }
+        let e = last_err.expect("encode retries exhausted without error");
+        eprintln!("[xechat:reembed] turn {}/{} chunk {}/{} encode FAILED after {} retries: {}", turn_idx, total, ci + 1, chunk_count, MAX_ENCODE_RETRIES, e);
+        Err(e)
+    }
+
+    /// 判断是否需要重试（非首次尝试）。
+    fn should_retry_encode(retry: u32) -> bool {
+        retry > 0
+    }
+
+    /// 计算重试退避时间。
+    fn compute_encode_backoff() -> std::time::Duration {
+        const RETRY_DELAY_SECS: u64 = 2;
+        std::time::Duration::from_secs(RETRY_DELAY_SECS)
     }
 
     /// 从 RawTurn 和 chunks 构建 TurnEntry。
@@ -645,16 +708,8 @@ impl VectorStore for LanceDbStore {
     async fn add_turn(&self, entry: TurnEntry) -> anyhow::Result<()> {
         let table = self.turns_table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("turns table not initialized"))?;
-
-        // Upsert 语义：先删除同 id 的旧行，再追加新行
-        // 避免反复重建导致同一 turn 的行无限累积（row_count 膨胀）
-        let predicate = format!("id = '{}'", entry.id.replace('\'', "\\'"));
-        if let Err(e) = table.delete(&predicate).await {
-            eprintln!("[xechat:add_turn] warning: failed to delete existing rows for upsert: {}", e);
-        }
-
-        let batch = Self::build_turn_batch(&entry, self.vector_dim)?;
-        table.add(vec![batch]).execute().await?;
+        let batch = Self::prepare_turn_record(table, &entry, self.vector_dim).await?;
+        Self::insert_turn_batch(table, batch).await?;
         self.maybe_rebuild_vector_index().await?;
         Ok(())
     }
@@ -685,6 +740,26 @@ enum ProcessResult {
 }
 
 impl LanceDbStore {
+    /// 准备 turn 记录：删除旧行并构建新 batch。
+    async fn prepare_turn_record(table: &lancedb::Table, entry: &TurnEntry, vector_dim: i32) -> anyhow::Result<RecordBatch> {
+        Self::delete_existing_turn_rows(table, &entry.id).await;
+        Self::build_turn_batch(entry, vector_dim)
+    }
+
+    /// 删除同 id 的旧行（upsert 语义）。
+    async fn delete_existing_turn_rows(table: &lancedb::Table, id: &str) {
+        let predicate = format!("id = '{}'", id.replace('\'', "\\'"));
+        if let Err(e) = table.delete(&predicate).await {
+            eprintln!("[xechat:add_turn] warning: failed to delete existing rows for upsert: {}", e);
+        }
+    }
+
+    /// 将 batch 写入表。
+    async fn insert_turn_batch(table: &lancedb::Table, batch: RecordBatch) -> anyhow::Result<()> {
+        table.add(vec![batch]).execute().await?;
+        Ok(())
+    }
+
     /// 执行向量搜索并收集结果批次。
     async fn execute_vector_search(&self, query_vector: &[f32], top_k: usize) -> anyhow::Result<Vec<RecordBatch>> {
         let table = self.turns_table.as_ref()
@@ -715,21 +790,33 @@ impl LanceDbStore {
 
     /// 诊断：读取表中实际存储的向量，计算与查询向量的余弦相似度并打印日志。
     async fn diagnose_stored_vectors(&self, table: &lancedb::Table, query_vector: &[f32]) {
+        let scan_batches = Self::collect_diagnostic_batches(table).await;
+        Self::log_diagnostic_report(&scan_batches, query_vector);
+    }
+
+    /// 收集诊断用的扫描批次。
+    async fn collect_diagnostic_batches(table: &lancedb::Table) -> Vec<RecordBatch> {
         let scan_stream = table.query().execute().await;
         if let Ok(stream) = scan_stream {
-            let scan_batches: Vec<RecordBatch> = stream.try_collect().await.unwrap_or_default();
-            for (bi, batch) in scan_batches.iter().enumerate() {
-                let ids = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
-                let vectors = batch.column_by_name("vector").and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
-                if let (Some(ids), Some(vectors)) = (ids, vectors) {
-                    for ri in 0..ids.len().min(4) {
-                        let id = ids.value(ri);
-                        if let Some(vec_val) = vectors.value(ri).as_any().downcast_ref::<Float32Array>() {
-                            let stored: Vec<f32> = vec_val.values().to_vec();
-                            let manual_cosine = Self::compute_cosine_similarity(&stored, query_vector);
-                            eprintln!("[xechat:search] stored_vec[batch={},row={},id={}] first5={:?} manual_cosine_with_query={:.6}",
-                                bi, ri, id, &stored[..5.min(stored.len())], manual_cosine);
-                        }
+            stream.try_collect().await.unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// 打印存储向量的诊断报告。
+    fn log_diagnostic_report(scan_batches: &[RecordBatch], query_vector: &[f32]) {
+        for (bi, batch) in scan_batches.iter().enumerate() {
+            let ids = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let vectors = batch.column_by_name("vector").and_then(|c| c.as_any().downcast_ref::<FixedSizeListArray>());
+            if let (Some(ids), Some(vectors)) = (ids, vectors) {
+                for ri in 0..ids.len().min(4) {
+                    let id = ids.value(ri);
+                    if let Some(vec_val) = vectors.value(ri).as_any().downcast_ref::<Float32Array>() {
+                        let stored: Vec<f32> = vec_val.values().to_vec();
+                        let manual_cosine = Self::compute_cosine_similarity(&stored, query_vector);
+                        eprintln!("[xechat:search] stored_vec[batch={},row={},id={}] first5={:?} manual_cosine_with_query={:.6}",
+                            bi, ri, id, &stored[..5.min(stored.len())], manual_cosine);
                     }
                 }
             }
@@ -743,14 +830,24 @@ impl LanceDbStore {
     pub async fn read_all_turns_raw(&self) -> anyhow::Result<Vec<RawTurn>> {
         let table = self.turns_table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("turns table not initialized"))?;
+        let batches = Self::execute_read_query(table).await?;
+        let turns = Self::parse_query_results(&batches);
+        Ok(turns)
+    }
 
+    /// 执行读取查询并收集批次。
+    async fn execute_read_query(table: &lancedb::Table) -> anyhow::Result<Vec<RecordBatch>> {
         let stream = table.query().execute().await?;
         let batches: Vec<RecordBatch> = stream.try_collect().await?;
+        Ok(batches)
+    }
 
+    /// 从查询结果中解析去重后的 RawTurn 列表。
+    fn parse_query_results(batches: &[RecordBatch]) -> Vec<RawTurn> {
         let mut seen_ids = std::collections::HashSet::new();
         let mut turns = Vec::new();
 
-        for batch in &batches {
+        for batch in batches {
             let ids = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
             let conv_ids = batch.column_by_name("conversation_id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
             let user_msg_ids = batch.column_by_name("user_message_id").and_then(|c| c.as_any().downcast_ref::<StringArray>());
@@ -783,7 +880,7 @@ impl LanceDbStore {
             }
         }
 
-        Ok(turns)
+        turns
     }
 
     /// 统计 turns 表的行数。
@@ -908,32 +1005,45 @@ impl LanceDbStore {
         let table = self.turns_table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("turns table not initialized"))?;
 
-        // 诊断：打印表状态，确认断点续传基础数据是否正确
         let row_count = table.count_rows(None).await.unwrap_or(0);
         eprintln!("[xechat:reembed] get_existing_turn_ids: table row_count={}", row_count);
 
+        let batches = Self::execute_turn_ids_query(table).await?;
+        let ids = Self::collect_turn_ids(&batches);
+        Self::log_existing_ids_summary(&ids);
+        Ok(ids)
+    }
+
+    /// 执行 turn ID 查询并收集批次。
+    async fn execute_turn_ids_query(table: &lancedb::Table) -> anyhow::Result<Vec<RecordBatch>> {
         let stream = table.query().execute().await?;
         let batches: Vec<RecordBatch> = stream.try_collect().await?;
-        let mut ids = std::collections::HashSet::new();
+        Ok(batches)
+    }
 
-        for batch in &batches {
+    /// 从批次中收集所有 turn ID。
+    fn collect_turn_ids(batches: &[RecordBatch]) -> std::collections::HashSet<String> {
+        let mut ids = std::collections::HashSet::new();
+        for batch in batches {
             if let Some(id_col) = batch.column_by_name("id").and_then(|c| c.as_any().downcast_ref::<StringArray>()) {
                 for i in 0..id_col.len() {
                     ids.insert(id_col.value(i).to_string());
                 }
             }
         }
+        ids
+    }
 
-        // 打印唯一 ID 数量和样本，用于诊断断点续传是否生效
+    /// 打印已有 turn ID 的摘要信息。
+    fn log_existing_ids_summary(ids: &std::collections::HashSet<String>) {
         eprintln!("[xechat:reembed] get_existing_turn_ids: unique_ids={}", ids.len());
-        if !ids.is_empty() {
-            let mut sample: Vec<_> = ids.iter().take(3).collect();
-            sample.sort();
-            for s in &sample {
-                eprintln!("[xechat:reembed]   existing_id sample: {}", s);
-            }
+        if ids.is_empty() {
+            return;
         }
-
-        Ok(ids)
+        let mut sample: Vec<_> = ids.iter().take(3).collect();
+        sample.sort();
+        for s in &sample {
+            eprintln!("[xechat:reembed]   existing_id sample: {}", s);
+        }
     }
 }

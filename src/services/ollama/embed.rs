@@ -213,32 +213,46 @@ pub async fn send_probe_request(
     Ok(resp)
 }
 
+/// 发送 `/api/show` 请求并返回响应，失败时返回 None。
+async fn send_show_request(client: &Client, base_url: &str, model: &str) -> Option<reqwest::Response> {
+    let url = format!("{}/api/show", base_url);
+    let resp = client
+        .post(&url)
+        .json(&serde_json::json!({"name": model}))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    Some(resp)
+}
+
 /// 从 Ollama `/api/show` 接口查询模型的上下文窗口大小。
 ///
 /// 解析 `model_info` 中的 `context_length` 字段。
 /// 查询失败时返回默认值 8192。
 async fn fetch_model_context_window(client: &Client, base_url: &str, model: &str) -> usize {
-    let url = format!("{}/api/show", base_url);
-    let resp = match client
-        .post(&url)
-        .json(&serde_json::json!({"name": model}))
-        .send()
-        .await
-    {
-        Ok(r) => r,
-        Err(_) => return 8192,
+    let resp = match send_show_request(client, base_url, model).await {
+        Some(r) => r,
+        None => return 8192,
     };
-
-    if !resp.status().is_success() {
-        return 8192;
-    }
 
     let body: serde_json::Value = match resp.json().await {
         Ok(b) => b,
         Err(_) => return 8192,
     };
 
-    // 尝试从 model_info 中提取 context_length
+    parse_context_window_response(&body)
+}
+
+/// 从 Ollama `/api/show` 响应体中解析上下文窗口大小。
+///
+/// 查找 `model_info` 中以 `context_length` 结尾的键，提取其值。
+/// 未找到时返回默认值 8192。
+fn parse_context_window_response(body: &serde_json::Value) -> usize {
     body.get("model_info")
         .and_then(|info| {
             // 查找包含 context_length 的键

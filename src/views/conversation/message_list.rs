@@ -188,7 +188,10 @@ pub fn MessageList() -> Element {
                 }
             }
             for msg in &messages {
-                MessageBubble { message: msg.clone(), streaming_reasoning: None }
+                MessageBubble {
+                    message: msg.clone(),
+                    reasoning_text: crate::views::conversation::message_bubble::resolve_reasoning_text(&None, &msg.reasoning_content),
+                }
             }
             {
                 if show_streaming {
@@ -204,7 +207,7 @@ pub fn MessageList() -> Element {
                                     timestamp: chrono::Utc::now(),
                                     status: MessageStatus::Sending,
                                 },
-                                streaming_reasoning: if stream_reasoning.is_empty() { None } else { Some(stream_reasoning) },
+                                reasoning_text: if stream_reasoning.is_empty() { String::new() } else { stream_reasoning },
                             }
                             div {
                                 class: "{css::conv_streaming_indicator}",

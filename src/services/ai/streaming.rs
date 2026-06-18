@@ -33,6 +33,28 @@ pub fn estimate_tokens(text: &str) -> usize {
     (char_count as f64 / 3.5).ceil() as usize
 }
 
+/// 按消息条数截断（硬上限）。
+fn truncate_by_count(messages: &[ChatMessage], max_count: usize) -> Vec<ChatMessage> {
+    if messages.len() > max_count {
+        messages[messages.len() - max_count..].to_vec()
+    } else {
+        messages.to_vec()
+    }
+}
+
+/// 按 token 数截断，保留至少 MIN_KEEP_MESSAGES 条。
+fn truncate_by_tokens(messages: &[ChatMessage], max_tokens: usize) -> Vec<ChatMessage> {
+    let mut selected = messages.to_vec();
+    while selected.len() > MIN_KEEP_MESSAGES {
+        let current_total: usize = selected.iter().map(|m| estimate_tokens(&m.content)).sum();
+        if current_total <= max_tokens {
+            break;
+        }
+        selected.remove(0);
+    }
+    selected
+}
+
 /// 压缩对话消息列表以适配模型上下文窗口。
 ///
 /// 当消息总 token 数超过 `max_tokens` 时，从头部逐条移除旧消息，
@@ -56,24 +78,8 @@ pub fn compress_messages(
         return messages.to_vec();
     }
 
-    // 先按消息条数截断（硬上限）
-    let mut selected: Vec<ChatMessage> = if messages.len() > MAX_CONTEXT_MESSAGES {
-        messages[messages.len() - MAX_CONTEXT_MESSAGES..].to_vec()
-    } else {
-        messages.to_vec()
-    };
-
-    // 再按 token 数截断
-    let max_tokens = max_tokens as usize;
-    while selected.len() > MIN_KEEP_MESSAGES {
-        let current_total: usize = selected.iter().map(|m| estimate_tokens(&m.content)).sum();
-        if current_total <= max_tokens {
-            break;
-        }
-        selected.remove(0);
-    }
-
-    selected
+    let selected = truncate_by_count(messages, MAX_CONTEXT_MESSAGES);
+    truncate_by_tokens(&selected, max_tokens as usize)
 }
 
 /// 从 HTTP 错误响应体中提取可读的错误消息。
@@ -119,6 +125,37 @@ pub fn is_sse_metadata_or_empty(line: &str) -> bool {
         || line.is_empty()
 }
 
+/// 解析 ChatResponse 中的 delta 字段，发送 Chunk 和 ReasoningChunk 事件。
+fn handle_chat_response_delta(
+    resp: &crate::models::ai::ChatResponse,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+) {
+    if let Some(delta) = resp.choices.first().and_then(|c| c.delta.as_ref()) {
+        if let Some(content) = delta.content.as_ref() {
+            let _ = tx.send(StreamEvent::Chunk(content.clone()));
+        }
+        if let Some(reasoning) = delta.reasoning_content.as_ref() {
+            let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.clone()));
+        }
+    }
+}
+
+/// 尝试从 JSON 响应中提取错误消息并发送 Error 事件。
+///
+/// 返回 `true` 如果找到错误（流应终止），`false` 如果不是错误响应。
+fn try_handle_error_response(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> bool {
+    if let Ok(err_resp) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(error_msg) = err_resp["error"]["message"].as_str() {
+            let _ = tx.send(StreamEvent::Error(AppError::Api {
+                status: 0,
+                body: Some(error_msg.to_string()),
+            }));
+            return true;
+        }
+    }
+    false
+}
+
 /// 处理 SSE data 字段内容，解析为 `StreamEvent` 并通过 channel 推送。
 ///
 /// 遇到 `[DONE]` 或错误响应时返回 `true`，表示流应终止。
@@ -131,28 +168,11 @@ pub fn handle_sse_data(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> b
     }
 
     if let Ok(resp) = serde_json::from_str::<ChatResponse>(data) {
-        if let Some(delta) = resp.choices.first().and_then(|c| c.delta.as_ref()) {
-            if let Some(content) = delta.content.as_ref() {
-                let _ = tx.send(StreamEvent::Chunk(content.clone()));
-            }
-            if let Some(reasoning) = delta.reasoning_content.as_ref() {
-                let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.clone()));
-            }
-        }
+        handle_chat_response_delta(&resp, tx);
         return false;
     }
 
-    if let Ok(err_resp) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(error_msg) = err_resp["error"]["message"].as_str() {
-            let _ = tx.send(StreamEvent::Error(AppError::Api {
-                status: 0,
-                body: Some(error_msg.to_string()),
-            }));
-            return true;
-        }
-    }
-
-    false
+    try_handle_error_response(data, tx)
 }
 
 /// 处理 SSE 缓冲区中的完整行，返回是否应终止流。
@@ -176,14 +196,29 @@ pub fn process_sse_lines(
 ) -> bool {
     buffer.clear();
     for (i, line) in lines.iter().enumerate() {
-        if let Some(data) = extract_data_field(line) {
-            if handle_sse_data(data, tx) {
-                return true;
-            }
-        } else if !is_sse_metadata_or_empty(line) && i == lines.len() - 1 {
-            buffer.push_str(line);
-            buffer.push('\n');
+        if process_single_sse_line(line, i, lines.len(), tx, buffer) {
+            return true;
         }
+    }
+    false
+}
+
+/// 处理单行 SSE 数据。
+///
+/// 返回 `true` 表示流应终止。
+fn process_single_sse_line(
+    line: &str,
+    index: usize,
+    total_lines: usize,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+    buffer: &mut String,
+) -> bool {
+    if let Some(data) = extract_data_field(line) {
+        return handle_sse_data(data, tx);
+    }
+    if !is_sse_metadata_or_empty(line) && index == total_lines - 1 {
+        buffer.push_str(line);
+        buffer.push('\n');
     }
     false
 }

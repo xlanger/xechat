@@ -12,6 +12,11 @@ use crate::models::ai::{AiProvider, SendMessageParams, StreamEvent};
 use crate::models::error::{AppError, AuthFailReason};
 use crate::services::ai::streaming::extract_error_from_body;
 use crate::services::paths;
+use super::retry::should_retry_result;
+pub use super::retry::{
+    compute_backoff_delay, should_retry_err_response, should_retry_error,
+    should_retry_ok_response, should_retry_status,
+};
 use futures_util::StreamExt;
 use reqwest::Client;
 use reqwest::header::HeaderValue;
@@ -74,37 +79,6 @@ pub fn resolve_auth_headers(
     Some(headers)
 }
 
-/// 判断 HTTP 状态码是否应触发重试（429 或 5xx）。
-#[inline]
-pub fn should_retry_status(status: reqwest::StatusCode) -> bool {
-    let code = status.as_u16();
-    code == 429 || code >= 500
-}
-
-/// 判断 reqwest 错误是否应触发重试（超时或连接错误）。
-#[inline]
-pub fn should_retry_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect()
-}
-
-/// 判断成功的 HTTP 响应是否应触发重试（可重试状态码且未超过最大重试次数）。
-#[inline]
-pub fn should_retry_ok_response(status: reqwest::StatusCode, attempt: u32, max_retries: u32) -> bool {
-    should_retry_status(status) && attempt < max_retries
-}
-
-/// 判断请求错误是否应触发重试（可重试错误且未超过最大重试次数）。
-#[inline]
-pub fn should_retry_err_response(error: &reqwest::Error, attempt: u32, max_retries: u32) -> bool {
-    should_retry_error(error) && attempt < max_retries
-}
-
-/// 计算指数退避延迟：500ms * 2^(attempt-1)。
-#[inline]
-pub fn compute_backoff_delay(attempt: u32) -> std::time::Duration {
-    std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1))
-}
-
 /// 带指数退避的 HTTP 请求重试。
 ///
 /// 对 429/5xx 状态码或连接超时/网络错误自动重试最多 `max_retries` 次。
@@ -120,28 +94,17 @@ async fn send_with_retry(
 
     loop {
         attempt += 1;
-        match client
+        let result = client
             .post(url)
             .headers(headers.clone())
             .json(body)
             .send()
-            .await
-        {
-            Ok(resp) => {
-                if should_retry_ok_response(resp.status(), attempt, max_retries) {
-                    tokio::time::sleep(compute_backoff_delay(attempt)).await;
-                    continue;
-                }
-                break Ok(resp);
-            }
-            Err(e) => {
-                if should_retry_err_response(&e, attempt, max_retries) {
-                    tokio::time::sleep(compute_backoff_delay(attempt)).await;
-                    continue;
-                }
-                break Err(e);
-            }
+            .await;
+
+        if !should_retry_result(&result, attempt, max_retries) {
+            break result;
         }
+        tokio::time::sleep(compute_backoff_delay(attempt)).await;
     }
 }
 
@@ -175,6 +138,54 @@ pub async fn handle_error_response(
     let _ = tx.send(StreamEvent::Error(app_err));
 }
 
+/// 处理 `response.output_text.delta` 事件，提取文本增量并发送。
+fn handle_response_delta(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(delta) = json["delta"].as_str() {
+            let _ = tx.send(StreamEvent::Chunk(delta.to_string()));
+        }
+    }
+}
+
+/// 处理 `response.reasoning.delta` 事件，提取推理增量并发送。
+fn handle_reasoning_delta(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(delta) = json["delta"].as_str() {
+            let _ = tx.send(StreamEvent::ReasoningChunk(delta.to_string()));
+        }
+    }
+}
+
+/// 处理 `response.error` 事件，提取错误消息并发送。
+fn handle_response_error(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+        let msg = json["error"]["message"]
+            .as_str()
+            .unwrap_or("Unknown error")
+            .to_string();
+        let _ = tx.send(StreamEvent::Error(AppError::Api {
+            status: 0,
+            body: Some(msg),
+        }));
+    }
+}
+
+/// 处理文本增量类事件（delta），返回 `Some(should_continue)`。
+#[inline]
+fn handle_delta_event(event_type: &str, data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> Option<bool> {
+    match event_type {
+        "response.output_text.delta" => {
+            handle_response_delta(data, tx);
+            Some(false)
+        }
+        "response.reasoning.delta" => {
+            handle_reasoning_delta(data, tx);
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 /// 处理 Responses API 的具名 SSE 事件数据。
 ///
 /// 返回 `true` 表示流应终止（收到完成或错误事件），`false` 表示继续。
@@ -184,41 +195,18 @@ pub fn handle_responses_event(
     data: &str,
     tx: &mpsc::UnboundedSender<StreamEvent>,
 ) -> bool {
+    if let Some(result) = handle_delta_event(event_type, data, tx) {
+        return result;
+    }
     match event_type {
-        "response.output_text.delta" => {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(delta) = json["delta"].as_str() {
-                    let _ = tx.send(StreamEvent::Chunk(delta.to_string()));
-                }
-            }
-            false
-        }
-        "response.reasoning.delta" => {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(delta) = json["delta"].as_str() {
-                    let _ = tx.send(StreamEvent::ReasoningChunk(delta.to_string()));
-                }
-            }
-            false
-        }
         "response.completed" => {
             let _ = tx.send(StreamEvent::Complete);
             true
         }
         "response.error" => {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                let msg = json["error"]["message"]
-                    .as_str()
-                    .unwrap_or("Unknown error")
-                    .to_string();
-                let _ = tx.send(StreamEvent::Error(AppError::Api {
-                    status: 0,
-                    body: Some(msg),
-                }));
-            }
+            handle_response_error(data, tx);
             true
         }
-        // 忽略其他事件类型（response.created, response.output_item.added, response.output_text.done 等）
         _ => false,
     }
 }
@@ -297,6 +285,24 @@ async fn handle_error_response_no_consume(
     let _ = tx.send(StreamEvent::Error(app_err));
 }
 
+/// 解析 SSE `data:` 行内容，返回 `true` 表示流应终止。
+fn parse_sse_data_line(
+    data: &str,
+    current_event: &mut String,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+) -> bool {
+    if data == "[DONE]" {
+        let _ = tx.send(StreamEvent::Complete);
+        return true;
+    }
+
+    if handle_responses_event(current_event, data, tx) {
+        return true;
+    }
+    current_event.clear();
+    false
+}
+
 /// 处理 SSE 行解析，返回 `true` 表示流应终止。
 ///
 /// 根据行前缀分发处理：`event:` 设置当前事件类型，`data:` 解析事件数据，
@@ -314,16 +320,7 @@ pub fn process_sse_line(
     if let Some(event_type) = trimmed.strip_prefix("event:") {
         *current_event = event_type.trim().to_string();
     } else if let Some(data) = trimmed.strip_prefix("data:") {
-        let data = data.trim();
-        if data == "[DONE]" {
-            let _ = tx.send(StreamEvent::Complete);
-            return true;
-        }
-
-        if handle_responses_event(current_event, data, tx) {
-            return true;
-        }
-        current_event.clear();
+        return parse_sse_data_line(data.trim(), current_event, tx);
     } else if trimmed.is_empty() {
         // 空行分隔事件，重置 event 类型
         current_event.clear();

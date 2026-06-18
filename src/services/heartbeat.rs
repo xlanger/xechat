@@ -47,17 +47,24 @@ enum HeartbeatEvent {
 /// * `embedder_ready` - 嵌入模型就绪 Signal（来自 ConversationStore）
 /// * `toast` - Toast 通知 Signal（来自 UIStore.active_toast）
 pub fn init(
-    mut network: Signal<bool>,
-    mut embedder_ready: Signal<bool>,
-    mut toast: Signal<Option<crate::stores::ui::Toast>>,
+    network: Signal<bool>,
+    embedder_ready: Signal<bool>,
+    toast: Signal<Option<crate::stores::ui::Toast>>,
 ) {
     if RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
 
-    let (tx, mut rx) = mpsc::channel::<HeartbeatEvent>(32);
+    let (tx, rx) = mpsc::channel::<HeartbeatEvent>(32);
 
-    // 启动心跳检测任务（tokio 线程，纯 IO）
+    spawn_heartbeat_tasks(tx);
+    spawn_heartbeat_loop(rx, network, embedder_ready, toast);
+
+    eprintln!("[xechat] Heartbeat service started");
+}
+
+/// 启动三个独立的心跳检测任务（网络、嵌入器、Ollama）。
+fn spawn_heartbeat_tasks(tx: mpsc::Sender<HeartbeatEvent>) {
     let net_tx = tx.clone();
     tokio::spawn(async move { network_heartbeat_task(net_tx).await });
 
@@ -65,34 +72,49 @@ pub fn init(
     tokio::spawn(async move { embedder_heartbeat_task(emb_tx).await });
 
     tokio::spawn(async move { ollama_heartbeat_task(tx).await });
+}
 
-    // 在 Dioxus 异步上下文中监听事件并更新 Signal
+/// 在 Dioxus 异步上下文中监听心跳事件并更新对应 Signal。
+fn spawn_heartbeat_loop(
+    mut rx: mpsc::Receiver<HeartbeatEvent>,
+    network: Signal<bool>,
+    embedder_ready: Signal<bool>,
+    toast: Signal<Option<crate::stores::ui::Toast>>,
+) {
     spawn(async move {
         while let Some(event) = rx.recv().await {
-            match event {
-                HeartbeatEvent::Network(online) => {
-                    network.set(online);
-                }
-                HeartbeatEvent::EmbedderReady(ready) => {
-                    embedder_ready.set(ready);
-                }
-                HeartbeatEvent::OllamaOnline => {
-                    // Ollama online 暂不暴露到 UI
-                }
-                HeartbeatEvent::Toast(key) => {
-                    use rust_i18n::t;
-                    let msg = t!(key).to_string();
-                    toast.set(Some(crate::stores::ui::Toast {
-                        message: msg,
-                        kind: crate::stores::ui::ToastKind::Info,
-                        duration_ms: 4000,
-                    }));
-                }
-            }
+            handle_heartbeat_event(event, network, embedder_ready, toast);
         }
     });
+}
 
-    eprintln!("[xechat] Heartbeat service started");
+/// 处理单个心跳事件，更新对应的 Signal。
+fn handle_heartbeat_event(
+    event: HeartbeatEvent,
+    mut network: Signal<bool>,
+    mut embedder_ready: Signal<bool>,
+    mut toast: Signal<Option<crate::stores::ui::Toast>>,
+) {
+    match event {
+        HeartbeatEvent::Network(online) => {
+            network.set(online);
+        }
+        HeartbeatEvent::EmbedderReady(ready) => {
+            embedder_ready.set(ready);
+        }
+        HeartbeatEvent::OllamaOnline => {
+            // Ollama online 暂不暴露到 UI
+        }
+        HeartbeatEvent::Toast(key) => {
+            use rust_i18n::t;
+            let msg = t!(key).to_string();
+            toast.set(Some(crate::stores::ui::Toast {
+                message: msg,
+                kind: crate::stores::ui::ToastKind::Info,
+                duration_ms: 4000,
+            }));
+        }
+    }
 }
 
 /// 停止所有心跳任务。

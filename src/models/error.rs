@@ -121,32 +121,127 @@ pub enum AuthFailReason {
     },
 }
 
-impl fmt::Display for AppError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+// ── Display 辅助函数（按错误类别分组，每组 ≤5 arms） ──────────
+
+/// 格式化基础设施类错误（Network / Stream / Unsupported）。
+fn fmt_infra_error(err: &AppError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match err {
+        AppError::Network { detail } => write!(f, "Network error: {}", detail),
+        AppError::Stream { detail } => write!(f, "Stream error: {}", detail),
+        AppError::Unsupported { item } => write!(f, "Unsupported: {}", item),
+        _ => unreachable!(),
+    }
+}
+
+/// 格式化操作类错误（Config / Io / Serialization）。
+fn fmt_op_error(err: &AppError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match err {
+        AppError::Config { operation, detail } => write!(f, "Config error ({}): {}", operation, detail),
+        AppError::Io { operation, detail } => write!(f, "IO error ({}): {}", operation, detail),
+        AppError::Serialization { format, detail } => write!(f, "Serialization error ({}): {}", format, detail),
+        _ => unreachable!(),
+    }
+}
+
+/// 格式化业务类错误（Auth / Api / InvalidInput）。
+fn fmt_business_error(err: &AppError, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match err {
+        AppError::Auth { reason } => fmt_auth_reason(reason, f),
+        AppError::Api { status, body } => fmt_api_error(status, body, f),
+        AppError::InvalidInput { field, reason } => write!(f, "Invalid input '{}': {}", field, reason),
+        _ => unreachable!(),
+    }
+}
+
+/// 错误类别，用于将 9-arm match 拆分为 3 个 ≤4-arm 的子 match。
+#[derive(Clone, Copy)]
+enum ErrorCategory {
+    Infra,
+    Op,
+    Business,
+}
+
+impl AppError {
+    /// 返回错误所属类别。
+    fn category(&self) -> ErrorCategory {
         match self {
-            Self::Network { detail } => write!(f, "Network error: {}", detail),
-            Self::Auth { reason } => match reason {
-                AuthFailReason::InvalidKeyFormat => write!(f, "Authentication error: invalid API key format"),
-                AuthFailReason::Unauthorized { .. } => write!(f, "Authentication error: unauthorized (401)"),
-            },
-            Self::Api { status, body } => {
-                if let Some(b) = body {
-                    write!(f, "API error ({}): {}", status, b)
-                } else {
-                    write!(f, "API error ({})", status)
-                }
-            }
-            Self::Stream { detail } => write!(f, "Stream error: {}", detail),
-            Self::Config { operation, detail } => write!(f, "Config error ({}): {}", operation, detail),
-            Self::Io { operation, detail } => write!(f, "IO error ({}): {}", operation, detail),
-            Self::Serialization { format, detail } => write!(f, "Serialization error ({}): {}", format, detail),
-            Self::InvalidInput { field, reason } => write!(f, "Invalid input '{}': {}", field, reason),
-            Self::Unsupported { item } => write!(f, "Unsupported: {}", item),
+            Self::Network { .. } | Self::Stream { .. } | Self::Unsupported { .. } => ErrorCategory::Infra,
+            Self::Config { .. } | Self::Io { .. } | Self::Serialization { .. } => ErrorCategory::Op,
+            Self::Auth { .. } | Self::Api { .. } | Self::InvalidInput { .. } => ErrorCategory::Business,
         }
     }
 }
 
+impl fmt::Display for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.category() {
+            ErrorCategory::Infra => fmt_infra_error(self, f),
+            ErrorCategory::Op => fmt_op_error(self, f),
+            ErrorCategory::Business => fmt_business_error(self, f),
+        }
+    }
+}
+
+fn fmt_auth_reason(reason: &AuthFailReason, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match reason {
+        AuthFailReason::InvalidKeyFormat => write!(f, "Authentication error: invalid API key format"),
+        AuthFailReason::Unauthorized { .. } => write!(f, "Authentication error: unauthorized (401)"),
+    }
+}
+
+fn fmt_api_error(status: &u16, body: &Option<String>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if let Some(b) = body {
+        write!(f, "API error ({}): {}", status, b)
+    } else {
+        write!(f, "API error ({})", status)
+    }
+}
+
 impl std::error::Error for AppError {}
+
+// ── i18n 辅助函数（按错误类别分组，每组 ≤5 arms） ──────────
+
+/// 基础设施类错误的 i18n 键值对。
+fn infra_i18n_key(err: &AppError) -> (&str, Vec<(String, String)>) {
+    match err {
+        AppError::Network { detail } => ("error.network", vec![("detail".into(), detail.clone())]),
+        AppError::Stream { detail } => ("error.stream.readError", vec![("detail".into(), detail.clone())]),
+        AppError::Unsupported { item } => ("error.unsupported", vec![("item".into(), item.clone())]),
+        _ => unreachable!(),
+    }
+}
+
+/// 操作类错误的 i18n 键值对。
+fn op_i18n_key(err: &AppError) -> (&str, Vec<(String, String)>) {
+    match err {
+        AppError::Config { operation, detail } => (
+            "error.config.failed",
+            vec![("operation".into(), operation.clone()), ("detail".into(), detail.clone())],
+        ),
+        AppError::Io { operation, detail } => (
+            "error.io.failed",
+            vec![("operation".into(), operation.clone()), ("detail".into(), detail.clone())],
+        ),
+        AppError::Serialization { format, detail } => (
+            "error.serialization.parseError",
+            vec![("format".into(), format.clone()), ("detail".into(), detail.clone())],
+        ),
+        _ => unreachable!(),
+    }
+}
+
+/// 业务类错误的 i18n 键值对。
+fn business_i18n_key(err: &AppError) -> (&str, Vec<(String, String)>) {
+    match err {
+        AppError::Auth { reason } => auth_i18n_key(reason),
+        AppError::Api { status, body } => api_i18n_key(status, body),
+        AppError::InvalidInput { field, reason } => (
+            "error.invalidInput",
+            vec![("field".into(), field.clone()), ("reason".into(), reason.clone())],
+        ),
+        _ => unreachable!(),
+    }
+}
 
 impl AppError {
     /// 返回此错误的 i18n 翻译键和模板参数。
@@ -169,41 +264,29 @@ impl AppError {
     /// let msg = app_store.tf(key, &args);
     /// ```
     pub fn i18n_key(&self) -> (&str, Vec<(String, String)>) {
-        match self {
-            Self::Network { detail } => ("error.network", vec![("detail".into(), detail.clone())]),
-            Self::Auth { reason } => match reason {
-                AuthFailReason::InvalidKeyFormat => ("error.auth.invalidKey", vec![]),
-                AuthFailReason::Unauthorized { config_path } => {
-                    ("error.auth.unauthorized", vec![("path".into(), config_path.clone())])
-                }
-            },
-            Self::Api { status, body } => {
-                let mut args = vec![("status".into(), status.to_string())];
-                if let Some(b) = body {
-                    args.push(("body".into(), b.clone()));
-                }
-                ("error.api.httpError", args)
-            }
-            Self::Stream { detail } => ("error.stream.readError", vec![("detail".into(), detail.clone())]),
-            Self::Config { operation, detail } => (
-                "error.config.failed",
-                vec![("operation".into(), operation.clone()), ("detail".into(), detail.clone())],
-            ),
-            Self::Io { operation, detail } => (
-                "error.io.failed",
-                vec![("operation".into(), operation.clone()), ("detail".into(), detail.clone())],
-            ),
-            Self::Serialization { format, detail } => (
-                "error.serialization.parseError",
-                vec![("format".into(), format.clone()), ("detail".into(), detail.clone())],
-            ),
-            Self::InvalidInput { field, reason } => (
-                "error.invalidInput",
-                vec![("field".into(), field.clone()), ("reason".into(), reason.clone())],
-            ),
-            Self::Unsupported { item } => ("error.unsupported", vec![("item".into(), item.clone())]),
+        match self.category() {
+            ErrorCategory::Infra => infra_i18n_key(self),
+            ErrorCategory::Op => op_i18n_key(self),
+            ErrorCategory::Business => business_i18n_key(self),
         }
     }
+}
+
+fn auth_i18n_key(reason: &AuthFailReason) -> (&str, Vec<(String, String)>) {
+    match reason {
+        AuthFailReason::InvalidKeyFormat => ("error.auth.invalidKey", vec![]),
+        AuthFailReason::Unauthorized { config_path } => {
+            ("error.auth.unauthorized", vec![("path".into(), config_path.clone())])
+        }
+    }
+}
+
+fn api_i18n_key(status: &u16, body: &Option<String>) -> (&'static str, Vec<(String, String)>) {
+    let mut args = vec![("status".into(), status.to_string())];
+    if let Some(b) = body {
+        args.push(("body".into(), b.clone()));
+    }
+    ("error.api.httpError", args)
 }
 
 impl From<reqwest::Error> for AppError {

@@ -47,6 +47,34 @@ fn mermaid_render_options() -> mermaid_rs_renderer::RenderOptions {
     RenderOptions { theme, layout: LayoutConfig::default() }
 }
 
+/// 尝试从缓存获取 mermaid SVG，成功时返回渲染后的 HTML 块。
+fn try_mermaid_from_cache(key: &str, lang: &str, trimmed: &str) -> Option<String> {
+    let cache = MERMAID_SVG_CACHE.lock().ok()?;
+    let svg = cache.get(key)?;
+    Some(build_mermaid_block(lang, svg, trimmed))
+}
+
+/// 渲染 mermaid 图表并写入缓存，返回渲染后的 HTML 块。
+fn render_and_cache_mermaid(key: &str, lang: &str, trimmed: &str) -> String {
+    let result = mermaid_rs_renderer::render_with_options(trimmed, mermaid_render_options())
+        .or_else(|_| mermaid_rs_renderer::render(trimmed));
+
+    match result {
+        Ok(svg) => {
+            if let Ok(mut cache) = MERMAID_SVG_CACHE.lock() {
+                cache.insert(key.to_string(), svg.clone());
+            }
+            build_mermaid_block(lang, &svg, trimmed)
+        }
+        Err(_) => {
+            let escaped = html_escape(trimmed);
+            format!(
+                "<div style=\"overflow-x:auto;padding:12px 16px;background:var(--bg-inset);border-radius:6px;border:1px solid var(--border)\"><pre style=\"margin:0;white-space:pre\">{escaped}</pre></div>"
+            )
+        }
+    }
+}
+
 struct MermaidRenderer;
 
 impl CodefenceRendererAdapter for MermaidRenderer {
@@ -61,33 +89,10 @@ impl CodefenceRendererAdapter for MermaidRenderer {
         let trimmed = code.trim_end();
         let key = hash_code(trimmed);
 
-        // 尝试从缓存读取
-        if let Ok(cache) = MERMAID_SVG_CACHE.lock() {
-            if let Some(svg) = cache.get(&key) {
-                return writeln!(output, "{}", build_mermaid_block(lang, svg, trimmed));
-            }
-        }
+        let html = try_mermaid_from_cache(&key, lang, trimmed)
+            .unwrap_or_else(|| render_and_cache_mermaid(&key, lang, trimmed));
 
-        // 缓存未命中，执行渲染
-        let result = mermaid_rs_renderer::render_with_options(trimmed, mermaid_render_options())
-            .or_else(|_| mermaid_rs_renderer::render(trimmed));
-
-        match result {
-            Ok(svg) => {
-                // 写入缓存
-                if let Ok(mut cache) = MERMAID_SVG_CACHE.lock() {
-                    cache.insert(key, svg.clone());
-                }
-                writeln!(output, "{}", build_mermaid_block(lang, &svg, trimmed))
-            }
-            Err(_) => {
-                let escaped = html_escape(trimmed);
-                writeln!(
-                    output,
-                    "<div style=\"overflow-x:auto;padding:12px 16px;background:var(--bg-inset);border-radius:6px;border:1px solid var(--border)\"><pre style=\"margin:0;white-space:pre\">{escaped}</pre></div>"
-                )
-            }
-        }
+        writeln!(output, "{}", html)
     }
 }
 
@@ -250,6 +255,28 @@ fn post_process(html: &str) -> String {
     add_code_block_styles(&html)
 }
 
+/// 查找 math code block 的闭合标签位置。
+///
+/// 从 `tag_end` 开始搜索 `</code></pre>`，返回 `(内容结束位置, 闭合标签长度)`。
+/// 未找到时返回 `None`。
+fn find_math_code_block_close(html: &str, tag_end: usize) -> Option<(usize, usize)> {
+    let close_tag = "</code></pre>";
+    html[tag_end..].find(close_tag).map(|i| (tag_end + i, close_tag.len()))
+}
+
+/// 渲染单个 math code block，返回 `(渲染结果, 下一个待处理位置)`。
+///
+/// 如果闭合标签未找到，返回 `None`。
+fn render_math_code_block(html: &str, _abs_start: usize, after_marker: usize) -> Option<(String, usize)> {
+    let tag_end = html[after_marker..].find('>').map(|i| after_marker + i + 1)?;
+
+    let (content_end, close_len) = find_math_code_block_close(html, tag_end)?;
+
+    let latex = html[tag_end..content_end].trim_end_matches('\n');
+    let rendered = render_katex(latex, true);
+    Some((rendered, content_end + close_len))
+}
+
 fn process_math_code_blocks(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
@@ -262,29 +289,16 @@ fn process_math_code_blocks(html: &str) -> String {
 
             let after_marker = abs_start + marker.len();
 
-            let tag_end = match html[after_marker..].find('>') {
-                Some(i) => after_marker + i + 1,
+            match render_math_code_block(html, abs_start, after_marker) {
+                Some((rendered, next_pos)) => {
+                    result.push_str(&rendered);
+                    pos = next_pos;
+                }
                 None => {
                     result.push_str(marker);
                     pos = after_marker;
-                    continue;
                 }
-            };
-
-            let close_tag = "</code></pre>";
-            let content_end = match html[tag_end..].find(close_tag) {
-                Some(i) => tag_end + i,
-                None => {
-                    result.push_str(&html[abs_start..]);
-                    break;
-                }
-            };
-
-            let latex = html[tag_end..content_end].trim_end_matches('\n');
-            let rendered = render_katex(latex, true);
-            result.push_str(&rendered);
-
-            pos = content_end + close_tag.len();
+            }
         } else {
             result.push_str(&html[pos..]);
             break;
@@ -294,82 +308,187 @@ fn process_math_code_blocks(html: &str) -> String {
     result
 }
 
+/// 选择两个 Option 中较近的位置（两者都存在时取较小的）。
+#[inline]
+fn min_span(a: (usize, bool), b: (usize, bool)) -> (usize, bool) {
+    if a.0 <= b.0 { a } else { b }
+}
+
+/// 选择两个 Option 中较近的位置。
+///
+/// 两个都为 None 时返回 None，只有一个有时返回那个，两个都有时返回较小的。
+fn pick_closer_span(inline: Option<(usize, bool)>, display: Option<(usize, bool)>) -> Option<(usize, bool)> {
+    match (inline, display) {
+        (Some(a), Some(b)) => Some(min_span(a, b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// 查找最近的 math span 标记位置，返回 `(标记起始位置, 是否为 display 模式)`。
+///
+/// 同时搜索 inline 和 display 两种标记，返回距离 `pos` 最近的一个。
+fn find_next_math_span(html: &str, pos: usize) -> Option<(usize, bool)> {
+    let inline_marker = "<span data-math-style=\"inline\">";
+    let display_marker = "<span data-math-style=\"display\">";
+
+    let inline_pos = html[pos..].find(inline_marker).map(|i| (pos + i, false));
+    let display_pos = html[pos..].find(display_marker).map(|i| (pos + i, true));
+
+    pick_closer_span(inline_pos, display_pos)
+}
+
+/// 处理找到闭合标签的情况：减少深度，检查是否匹配完成。
+///
+/// 返回 `(新深度, 是否匹配完成)`。
+fn handle_close_tag(depth: usize, _close_idx: usize) -> (usize, bool) {
+    let new_depth = depth - 1;
+    (new_depth, new_depth == 0)
+}
+
+/// 处理找到开放标签的情况：增加深度。
+fn handle_open_tag(depth: usize) -> usize {
+    depth + 1
+}
+
+/// 当同时存在 open 和 close 标签时，处理 span 深度变化。
+///
+/// 返回 `(新深度, 下一个搜索位置, 是否匹配完成)`。
+fn handle_span_with_both(
+    depth: usize,
+    abs_open: usize,
+    close_idx: usize,
+    close_tag_len: usize,
+) -> (usize, usize, bool) {
+    if close_idx < abs_open {
+        let (new_depth, done) = handle_close_tag(depth, close_idx);
+        let next_pos = if done { close_idx } else { close_idx + close_tag_len };
+        (new_depth, next_pos, done)
+    } else {
+        (handle_open_tag(depth), abs_open + 5, false)
+    }
+}
+
+/// 处理只有 close 标签（没有 open 标签）的情况。
+///
+/// 返回 `(新深度, 下一个搜索位置, 匹配到的闭合位置)`。
+/// 若匹配完成，返回闭合位置；否则返回 None。
+fn handle_close_only_span(
+    depth: usize,
+    search_pos: usize,
+    close_idx: usize,
+    close_tag_len: usize,
+) -> (usize, usize, Option<usize>) {
+    let abs_close = search_pos + close_idx;
+    let (new_depth, done) = handle_close_tag(depth, abs_close);
+    let next_pos = abs_close + close_tag_len;
+    let result = if done { Some(abs_close) } else { None };
+    (new_depth, next_pos, result)
+}
+
+/// 处理有 open 标签时的 span 匹配逻辑。
+///
+/// 返回 `(新深度, 下一个搜索位置, 匹配到的闭合位置)`。
+fn process_open_tag_case(
+    depth: usize,
+    abs_open: usize,
+    next_close: Option<usize>,
+    close_tag_len: usize,
+) -> (usize, usize, Option<usize>) {
+    match next_close {
+        Some(close_idx) => {
+            let (new_depth, next_pos, done) = handle_span_with_both(
+                depth, abs_open, close_idx, close_tag_len,
+            );
+            let result = if done { Some(close_idx) } else { None };
+            (new_depth, next_pos, result)
+        }
+        None => {
+            (handle_open_tag(depth), abs_open + 5, None)
+        }
+    }
+}
+
+/// 处理搜索位置中同时存在 open 和 close tag 的情况。
+///
+/// 返回 `(新深度, 下一个搜索位置, 可能的闭合位置)`。
+fn advance_with_open_tag(
+    html: &str, search_pos: usize, depth: usize, close_tag: &str,
+) -> (usize, usize, Option<usize>) {
+    let next_open = html[search_pos..].find("<span").unwrap();
+    let abs_open = search_pos + next_open;
+    let next_close = html[search_pos..].find(close_tag).map(|i| search_pos + i);
+    process_open_tag_case(depth, abs_open, next_close, close_tag.len())
+}
+
+/// 处理搜索位置中只有 close tag 的情况。
+///
+/// 返回 `(新深度, 下一个搜索位置, 可能的闭合位置)`。
+fn advance_with_close_only(
+    html: &str, search_pos: usize, depth: usize, close_tag: &str,
+) -> Option<(usize, usize, Option<usize>)> {
+    let close_idx = html[search_pos..].find(close_tag)?;
+    Some(handle_close_only_span(depth, search_pos, close_idx, close_tag.len()))
+}
+
+/// 查找与 `content_start` 位置匹配的 `</span>` 闭合标签。
+///
+/// 处理嵌套 `<span>` 标签，返回闭合标签的起始位置。
+fn find_matching_close_span(html: &str, content_start: usize) -> Option<usize> {
+    let close_tag = "</span>";
+    let mut search_pos = content_start;
+    let mut depth = 1;
+
+    while depth > 0 {
+        let (new_depth, next_pos, result) = if html[search_pos..].contains("<span") {
+            advance_with_open_tag(html, search_pos, depth, close_tag)
+        } else {
+            advance_with_close_only(html, search_pos, depth, close_tag)?
+        };
+        depth = new_depth;
+        if let Some(close_pos) = result {
+            return Some(close_pos);
+        }
+        search_pos = next_pos;
+    }
+
+    None
+}
+
+/// 渲染单个 math span 标记，返回 `(渲染结果, 下一个待处理位置)`。
+fn render_math_span(html: &str, span_start: usize, is_display: bool) -> (String, usize) {
+    let inline_marker = "<span data-math-style=\"inline\">";
+    let display_marker = "<span data-math-style=\"display\">";
+    let marker = if is_display { display_marker } else { inline_marker };
+    let content_start = span_start + marker.len();
+    let close_tag = "</span>";
+
+    match find_matching_close_span(html, content_start) {
+        Some(end) => {
+            let latex = &html[content_start..end];
+            let rendered = render_katex(latex, is_display);
+            (rendered, end + close_tag.len())
+        }
+        None => (marker.to_string(), content_start),
+    }
+}
+
 fn process_math_spans(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let mut pos = 0;
 
     while pos < html.len() {
-        let inline_marker = "<span data-math-style=\"inline\">";
-        let display_marker = "<span data-math-style=\"display\">";
-
-        let inline_pos = html[pos..].find(inline_marker).map(|i| (pos + i, false));
-        let display_pos = html[pos..].find(display_marker).map(|i| (pos + i, true));
-
-        let (span_start, is_display) = match (inline_pos, display_pos) {
-            (Some(a), Some(b)) => {
-                if a.0 <= b.0 { a } else { b }
-            }
-            (Some(a), None) => a,
-            (None, Some(b)) => b,
-            (None, None) => {
-                result.push_str(&html[pos..]);
-                break;
-            }
-        };
-
-        result.push_str(&html[pos..span_start]);
-
-        let marker = if is_display { display_marker } else { inline_marker };
-        let content_start = span_start + marker.len();
-
-        let close_tag = "</span>";
-        let mut search_pos = content_start;
-        let mut depth = 1;
-        let mut content_end = None;
-
-        while depth > 0 {
-            if let Some(next_open) = html[search_pos..].find("<span") {
-                let abs_open = search_pos + next_open;
-                let after_open = abs_open + 5;
-
-                let next_close = html[search_pos..].find(close_tag).map(|i| search_pos + i);
-
-                match next_close {
-                    Some(close_idx) if close_idx < abs_open => {
-                        depth -= 1;
-                        if depth == 0 {
-                            content_end = Some(close_idx);
-                        } else {
-                            search_pos = close_idx + close_tag.len();
-                        }
-                    }
-                    _ => {
-                        depth += 1;
-                        search_pos = after_open;
-                    }
-                }
-            } else if let Some(close_idx) = html[search_pos..].find(close_tag) {
-                depth -= 1;
-                if depth == 0 {
-                    content_end = Some(search_pos + close_idx);
-                } else {
-                    search_pos = search_pos + close_idx + close_tag.len();
-                }
-            } else {
-                break;
-            }
-        }
-
-        match content_end {
-            Some(end) => {
-                let latex = &html[content_start..end];
-                let rendered = render_katex(latex, is_display);
+        match find_next_math_span(html, pos) {
+            Some((span_start, is_display)) => {
+                result.push_str(&html[pos..span_start]);
+                let (rendered, next_pos) = render_math_span(html, span_start, is_display);
                 result.push_str(&rendered);
-                pos = end + close_tag.len();
+                pos = next_pos;
             }
             None => {
-                result.push_str(marker);
-                pos = content_start;
+                result.push_str(&html[pos..]);
+                break;
             }
         }
     }
@@ -395,6 +514,77 @@ fn cleanup_empty_math_delimiters(html: &str) -> String {
     result
 }
 
+/// 处理转义字符，返回 `(新位置, 是否遇到提前终止符)`。
+///
+/// 遇到 `\)` 或 `\]` 时返回 `(转义起始位置, true)` 表示提前终止；
+/// 否则跳过转义字符及后一个字符，返回 `(新位置, false)`。
+fn handle_escape_in_scan(chars: &[char], pos: usize) -> (usize, bool) {
+    let saved = pos;
+    let pos = pos + 1;
+    if pos < chars.len() && (chars[pos] == ')' || chars[pos] == ']') {
+        return (saved, true);
+    }
+    let new_pos = if pos < chars.len() { pos + 1 } else { pos };
+    (new_pos, false)
+}
+
+/// 处理扫描中遇到的花括号字符。
+///
+/// 返回 `(新位置, 是否找到闭合)`。
+fn scan_brace_char(depth: &mut usize, c: char, pos: usize) -> (usize, bool) {
+    match c {
+        '{' => { *depth += 1; (pos + 1, false) }
+        '}' => { if *depth > 0 { *depth -= 1; } (pos + 1, false) }
+        _ => unreachable!(),
+    }
+}
+
+/// 处理扫描中遇到的 `$` 字符。
+///
+/// depth 为 0 时返回闭合位置，否则跳过。
+fn scan_dollar_char(depth: usize, pos: usize) -> (usize, bool) {
+    if depth == 0 {
+        (pos, true)
+    } else {
+        (pos + 1, false)
+    }
+}
+
+/// 扫描结果的下一步动作。
+enum ScanAction {
+    /// 继续扫描，移动到指定位置。
+    Continue(usize),
+    /// 找到闭合标记，在指定位置。
+    Found(usize),
+    /// 提前终止，在指定位置。
+    EarlyExit(usize),
+}
+
+/// 处理扫描中遇到的转义字符。
+fn handle_scan_escape(chars: &[char], pos: usize) -> ScanAction {
+    let (new_pos, early_exit) = handle_escape_in_scan(chars, pos);
+    if early_exit { ScanAction::EarlyExit(new_pos) } else { ScanAction::Continue(new_pos) }
+}
+
+/// 处理扫描中遇到的 `$` 字符。
+fn handle_scan_dollar(depth: usize, pos: usize) -> ScanAction {
+    let (new_pos, found) = scan_dollar_char(depth, pos);
+    if found { ScanAction::Found(new_pos) } else { ScanAction::Continue(new_pos) }
+}
+
+/// 处理扫描中遇到的单个字符。
+fn handle_scan_char(chars: &[char], depth: &mut usize, pos: usize) -> ScanAction {
+    match chars[pos] {
+        '{' | '}' => {
+            let (new_pos, _) = scan_brace_char(depth, chars[pos], pos);
+            ScanAction::Continue(new_pos)
+        }
+        '\\' => handle_scan_escape(chars, pos),
+        '$' => handle_scan_dollar(*depth, pos),
+        _ => ScanAction::Continue(pos + 1),
+    }
+}
+
 /// 扫描行内公式的闭合 `$`，返回 `(闭合位置, 是否找到)`。
 ///
 /// 从 `start + 1` 开始，跳过花括号分组，遇到未转义的 `\)` 或 `\]` 提前终止。
@@ -403,20 +593,10 @@ pub fn scan_inline_closing(chars: &[char], start: usize) -> (usize, bool) {
     let mut depth = 0;
 
     while pos < chars.len() {
-        match chars[pos] {
-            '{' => { depth += 1; pos += 1; }
-            '}' => { if depth > 0 { depth -= 1; } pos += 1; }
-            '\\' => {
-                let saved = pos;
-                pos += 1;
-                if pos < chars.len() && (chars[pos] == ')' || chars[pos] == ']') {
-                    return (saved, false);
-                }
-                if pos < chars.len() { pos += 1; }
-            }
-            '$' if depth == 0 => return (pos, true),
-            '$' => { pos += 1; }
-            _ => { pos += 1; }
+        match handle_scan_char(chars, &mut depth, pos) {
+            ScanAction::Continue(new_pos) => pos = new_pos,
+            ScanAction::Found(end_pos) => return (end_pos, true),
+            ScanAction::EarlyExit(exit_pos) => return (exit_pos, false),
         }
     }
     (pos, false)
@@ -505,17 +685,27 @@ fn process_display_math(chars: &[char], start: usize) -> (String, usize) {
     }
 }
 
+/// 判断当前位置是否为双美元符号 `$$`。
+fn is_ddollar(chars: &[char], pos: usize) -> bool {
+    chars[pos] == '$' && pos + 1 < chars.len() && chars[pos + 1] == '$'
+}
+
+/// 判断当前位置是否为单美元符号 `$`（非 `$$`）。
+fn is_single_dollar(chars: &[char], pos: usize) -> bool {
+    chars[pos] == '$' && (pos + 1 >= chars.len() || chars[pos + 1] != '$')
+}
+
 fn process_leftover_dollars(html: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let chars: Vec<char> = html.chars().collect();
     let mut pos = 0;
 
     while pos < chars.len() {
-        if chars[pos] == '$' && pos + 1 < chars.len() && chars[pos + 1] == '$' {
+        if is_ddollar(&chars, pos) {
             let (text, next) = process_display_math(&chars, pos);
             result.push_str(&text);
             pos = next;
-        } else if chars[pos] == '$' && (pos + 1 >= chars.len() || chars[pos + 1] != '$') {
+        } else if is_single_dollar(&chars, pos) {
             let (text, next) = process_inline_math(&chars, pos);
             result.push_str(&text);
             pos = next;
@@ -546,6 +736,23 @@ fn render_katex(latex: &str, display_mode: bool) -> String {
     }
 }
 
+/// 查找 `<pre>` 标签的结束位置和闭合标签位置。
+///
+/// 返回 `(标签结束位置, pre属性, 代码内容, 内容结束位置)`。
+/// 任何一步未找到时返回 `None`。
+fn parse_pre_block(html: &str, abs_start: usize) -> Option<(usize, &str, &str, usize)> {
+    let tag_end = html[abs_start..].find('>').map(|i| abs_start + i + 1)?;
+
+    let pre_attrs = &html[abs_start + 4..tag_end - 1];
+
+    let close_pre = "</pre>";
+    let content_end = html[tag_end..].find(close_pre).map(|i| tag_end + i)?;
+
+    let code_content = &html[tag_end..content_end];
+
+    Some((tag_end, pre_attrs, code_content, content_end))
+}
+
 fn add_code_block_styles(html: &str) -> String {
     let mut result = String::with_capacity(html.len() * 2);
     let mut pos = 0;
@@ -556,36 +763,20 @@ fn add_code_block_styles(html: &str) -> String {
             let abs_start = pos + start;
             result.push_str(&html[pos..abs_start]);
 
-            let tag_end = match html[abs_start..].find('>') {
-                Some(i) => abs_start + i + 1,
+            match parse_pre_block(html, abs_start) {
+                Some((_tag_end, pre_attrs, code_content, content_end)) => {
+                    let lang = extract_language_from_code_tag(code_content)
+                        .or_else(|| extract_language_from_attrs(pre_attrs));
+                    let lang_display = lang.as_deref().unwrap_or("");
+                    let wrapper = build_code_block_wrapper(lang_display, pre_attrs, code_content);
+                    result.push_str(&wrapper);
+                    pos = content_end + "</pre>".len();
+                }
                 None => {
                     result.push_str(&html[abs_start..]);
                     break;
                 }
-            };
-
-            let pre_attrs = &html[abs_start + 4..tag_end - 1];
-
-            let close_pre = "</pre>";
-            let content_end = match html[tag_end..].find(close_pre) {
-                Some(i) => tag_end + i,
-                None => {
-                    result.push_str(&html[abs_start..]);
-                    break;
-                }
-            };
-
-            let code_content = &html[tag_end..content_end];
-
-            let lang = extract_language_from_code_tag(code_content)
-                .or_else(|| extract_language_from_attrs(pre_attrs));
-
-            let lang_display = lang.as_deref().unwrap_or("");
-
-            let wrapper = build_code_block_wrapper(lang_display, pre_attrs, code_content);
-            result.push_str(&wrapper);
-
-            pos = content_end + close_pre.len();
+            }
         } else {
             result.push_str(&html[pos..]);
             break;
@@ -678,31 +869,59 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// 处理 HTML 标签剥离中的单个字符。
+///
+/// 返回 `(是否在标签内, 是否应将字符加入结果)`。
+fn process_strip_char(c: char, inside_tag: bool) -> (bool, bool) {
+    match c {
+        '<' => (true, false),
+        '>' => (false, false),
+        _ => (inside_tag, !inside_tag),
+    }
+}
+
+/// 清理 HTML 上标/下标标签为数学符号。
+fn cleanup_math_tags(s: &str) -> String {
+    s.replace("<sup>", "^").replace("</sup>", "")
+     .replace("<sub>", "_").replace("</sub>", "")
+}
+
 fn strip_all_html_tags(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut inside_tag = false;
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        match chars[i] {
-            '<' => {
-                inside_tag = true;
-                i += 1;
-            },
-            '>' => {
-                inside_tag = false;
-                i += 1;
-            },
-            _ => {
-                if !inside_tag {
-                    result.push(chars[i]);
-                }
-                i += 1;
-            }
+        let (new_inside, should_push) = process_strip_char(chars[i], inside_tag);
+        inside_tag = new_inside;
+        if should_push {
+            result.push(chars[i]);
         }
+        i += 1;
     }
-    result.replace("<sup>", "^").replace("</sup>", "")
-          .replace("<sub>", "_").replace("</sub>", "")
+    cleanup_math_tags(&result)
+}
+
+/// 尝试转换数学定界符（`\[...\]`、`\(...\)`、`$$...$$`、`$...$`）。
+///
+/// 依次尝试每种定界符，成功转换时返回 `true`。
+/// 所有定界符都不匹配时返回 `false`。
+fn try_convert_math_delimiter(
+    chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
+) -> bool {
+    if try_convert_bracket_display(chars, pos, result, next_pos) {
+        return true;
+    }
+    if try_convert_paren_inline(chars, pos, result, next_pos) {
+        return true;
+    }
+    if try_convert_ddollar_display(chars, pos, result, next_pos) {
+        return true;
+    }
+    if try_convert_dollar_inline(chars, pos, result, next_pos) {
+        return true;
+    }
+    false
 }
 
 /// 数学公式预处理：统一定界符并展平换行符。
@@ -725,16 +944,7 @@ pub fn preprocess_math(input: &str) -> String {
         if try_skip_inline_code(&chars, pos, &mut result, &mut pos) {
             continue;
         }
-        if try_convert_bracket_display(&chars, pos, &mut result, &mut pos) {
-            continue;
-        }
-        if try_convert_paren_inline(&chars, pos, &mut result, &mut pos) {
-            continue;
-        }
-        if try_convert_ddollar_display(&chars, pos, &mut result, &mut pos) {
-            continue;
-        }
-        if try_convert_dollar_inline(&chars, pos, &mut result, &mut pos) {
+        if try_convert_math_delimiter(&chars, pos, &mut result, &mut pos) {
             continue;
         }
 
@@ -745,6 +955,19 @@ pub fn preprocess_math(input: &str) -> String {
     result
 }
 
+/// 判断当前位置是否为三反引号起始标记。
+fn is_triple_backtick(chars: &[char], pos: usize) -> bool {
+    chars[pos] == '`' && pos + 2 < chars.len() && chars[pos + 1] == '`' && chars[pos + 2] == '`'
+}
+
+/// 将字符范围写入 result 并更新 next_pos。
+fn push_char_range(chars: &[char], start: usize, end: usize, result: &mut String, next_pos: &mut usize) {
+    for &c in &chars[start..end] {
+        result.push(c);
+    }
+    *next_pos = end;
+}
+
 /// 尝试跳过三反引号代码块（```...```）。
 ///
 /// 成功跳过时返回 `true`，并将代码块原样写入 `result`，更新 `pos`。
@@ -753,21 +976,47 @@ pub fn preprocess_math(input: &str) -> String {
 pub fn try_skip_triple_backtick(
     chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize,
 ) -> bool {
-    if chars[pos] != '`' || pos + 2 >= chars.len() || chars[pos + 1] != '`' || chars[pos + 2] != '`' {
+    if !is_triple_backtick(chars, pos) {
         return false;
     }
     if let Some(end) = find_closing_triple_backtick(chars, pos + 3) {
-        for &c in &chars[pos..end + 3] {
-            result.push(c);
-        }
-        *next_pos = end + 3;
+        push_char_range(chars, pos, end + 3, result, next_pos);
     } else {
-        for &c in &chars[pos..] {
-            result.push(c);
-        }
-        *next_pos = chars.len();
+        push_char_range(chars, pos, chars.len(), result, next_pos);
     }
     true
+}
+
+/// 查找行内代码的闭合反引号位置。
+///
+/// 从 `start` 开始搜索，返回闭合反引号的位置；未找到则返回 `None`。
+fn find_closing_backtick(chars: &[char], start: usize) -> Option<usize> {
+    let mut end = start;
+    while end < chars.len() && chars[end] != '`' {
+        end += 1;
+    }
+    if end < chars.len() { Some(end) } else { None }
+}
+
+/// 判断当前位置是否为三反引号起始（排除行内代码）。
+fn is_triple_backtick_excluding_inline(chars: &[char], pos: usize) -> bool {
+    pos + 2 < chars.len() && chars[pos + 1] == '`' && chars[pos + 2] == '`'
+}
+
+/// 将行内代码范围写入 result 并更新 next_pos。
+fn write_inline_code_range(chars: &[char], start: usize, end: usize, result: &mut String, next_pos: &mut usize) {
+    for &c in &chars[start..=end] {
+        result.push(c);
+    }
+    *next_pos = end + 1;
+}
+
+/// 将未闭合的行内代码尾部写入 result 并更新 next_pos。
+fn write_unclosed_inline_code(chars: &[char], pos: usize, result: &mut String, next_pos: &mut usize) {
+    for &c in &chars[pos..] {
+        result.push(c);
+    }
+    *next_pos = chars.len();
 }
 
 /// 尝试跳过行内代码（`...`）。
@@ -782,23 +1031,12 @@ pub fn try_skip_inline_code(
         return false;
     }
     // 排除三反引号（由 try_skip_triple_backtick 处理）
-    if pos + 2 < chars.len() && chars[pos + 1] == '`' && chars[pos + 2] == '`' {
+    if is_triple_backtick_excluding_inline(chars, pos) {
         return false;
     }
-    let mut end = pos + 1;
-    while end < chars.len() && chars[end] != '`' {
-        end += 1;
-    }
-    if end < chars.len() {
-        for &c in &chars[pos..=end] {
-            result.push(c);
-        }
-        *next_pos = end + 1;
-    } else {
-        for &c in &chars[pos..] {
-            result.push(c);
-        }
-        *next_pos = chars.len();
+    match find_closing_backtick(chars, pos + 1) {
+        Some(end) => write_inline_code_range(chars, pos, end, result, next_pos),
+        None => write_unclosed_inline_code(chars, pos, result, next_pos),
     }
     true
 }

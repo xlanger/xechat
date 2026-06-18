@@ -7,15 +7,34 @@
 use chrono::{DateTime, Utc, Local};
 use chrono_tz::Tz;
 
+/// 将日期相关格式别名解析为 chrono 格式字符串。
+fn match_date_token(token: &str) -> Option<&'static str> {
+    match token {
+        "date" => Some("%Y-%m-%d"),
+        "datetime" => Some("%Y-%m-%d %H:%M"),
+        _ => None,
+    }
+}
+
+/// 将时间相关格式别名解析为 chrono 格式字符串。
+fn match_time_token(token: &str) -> Option<&'static str> {
+    match token {
+        "time" => Some("%H:%M"),
+        "short" => Some("%m-%d %H:%M"),
+        _ => None,
+    }
+}
+
+/// 将格式别名解析为 chrono 格式字符串，未知别名原样返回。
+fn match_format_token(token: &str) -> &str {
+    match_date_token(token)
+        .or_else(|| match_time_token(token))
+        .unwrap_or(token)
+}
+
 /// 将格式别名解析为 chrono 格式字符串。
 pub fn resolve_format_pattern(fmt: &str) -> &str {
-    match fmt {
-        "date" => "%Y-%m-%d",
-        "datetime" => "%Y-%m-%d %H:%M",
-        "time" => "%H:%M",
-        "short" => "%m-%d %H:%M",
-        other => other,
-    }
+    match_format_token(fmt)
 }
 
 /// 将 UTC 时间按用户偏好时区格式化输出。

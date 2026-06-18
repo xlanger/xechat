@@ -7,6 +7,11 @@ use crate::models::ai::{AiProvider, ChatRequest, SendMessageParams, StreamEvent}
 use crate::models::error::{AppError, AuthFailReason};
 use crate::services::ai::streaming::{extract_error_from_body, parse_sse_stream};
 use crate::services::paths;
+use super::retry::should_retry_result;
+pub use super::retry::{
+    compute_backoff_delay, should_retry_err_response, should_retry_error,
+    should_retry_ok_response, should_retry_status,
+};
 use reqwest::Client;
 use reqwest::header::HeaderValue;
 use tokio::sync::mpsc;
@@ -62,37 +67,6 @@ pub fn resolve_auth_headers(
     Some(headers)
 }
 
-/// 判断 HTTP 状态码是否应触发重试（429 或 5xx）。
-#[inline]
-pub fn should_retry_status(status: reqwest::StatusCode) -> bool {
-    let code = status.as_u16();
-    code == 429 || code >= 500
-}
-
-/// 判断 reqwest 错误是否应触发重试（超时或连接错误）。
-#[inline]
-pub fn should_retry_error(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect()
-}
-
-/// 判断成功的 HTTP 响应是否应触发重试（可重试状态码且未超过最大重试次数）。
-#[inline]
-pub fn should_retry_ok_response(status: reqwest::StatusCode, attempt: u32, max_retries: u32) -> bool {
-    should_retry_status(status) && attempt < max_retries
-}
-
-/// 判断请求错误是否应触发重试（可重试错误且未超过最大重试次数）。
-#[inline]
-pub fn should_retry_err_response(error: &reqwest::Error, attempt: u32, max_retries: u32) -> bool {
-    should_retry_error(error) && attempt < max_retries
-}
-
-/// 计算指数退避延迟：500ms * 2^(attempt-1)。
-#[inline]
-pub fn compute_backoff_delay(attempt: u32) -> std::time::Duration {
-    std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1))
-}
-
 /// 带指数退避的 HTTP 请求重试。
 ///
 /// 对 429/5xx 状态码或连接超时/网络错误自动重试最多 `max_retries` 次。
@@ -108,7 +82,7 @@ async fn send_with_retry(
 
     loop {
         attempt += 1;
-        match client
+        let result = client
             .post(url)
             // 不设 .timeout()：它覆盖整个请求+响应体读取，
             // 对流式响应不合适（模型生成可能需要数分钟）。
@@ -116,23 +90,12 @@ async fn send_with_retry(
             .headers(headers.clone())
             .json(request)
             .send()
-            .await
-        {
-            Ok(resp) => {
-                if should_retry_ok_response(resp.status(), attempt, max_retries) {
-                    tokio::time::sleep(compute_backoff_delay(attempt)).await;
-                    continue;
-                }
-                break Ok(resp);
-            }
-            Err(e) => {
-                if should_retry_err_response(&e, attempt, max_retries) {
-                    tokio::time::sleep(compute_backoff_delay(attempt)).await;
-                    continue;
-                }
-                break Err(e);
-            }
+            .await;
+
+        if !should_retry_result(&result, attempt, max_retries) {
+            break result;
         }
+        tokio::time::sleep(compute_backoff_delay(attempt)).await;
     }
 }
 

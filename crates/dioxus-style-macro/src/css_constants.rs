@@ -20,20 +20,39 @@ fn has_scss_indicators(content: &str) -> bool {
     false
 }
 
+/// Checks if `&` appears at a position inside braces.
+///
+/// Returns `true` if `ch` is `&` and `in_braces > 0` (i.e. inside a declaration block),
+/// `false` otherwise.
+#[inline]
+fn check_ampersand_at_pos(ch: char, in_braces: i32) -> bool {
+    ch == '&' && in_braces > 0
+}
+
+/// Updates brace depth based on a character.
+///
+/// Returns the new brace depth after processing `ch`.
+#[inline]
+fn update_brace_depth(ch: char, in_braces: i32) -> i32 {
+    match ch {
+        '{' => in_braces + 1,
+        '}' => in_braces - 1,
+        _ => in_braces,
+    }
+}
+
 /// Checks for a `&` parent selector nested inside braces.
 ///
 /// Returns `true` if an `&` character appears while at least one `{` is
 /// currently open (i.e. inside a declaration block).
 #[inline]
 fn has_nested_ampersand(content: &str) -> bool {
-    let mut in_braces = 0;
+    let mut in_braces: i32 = 0;
     for ch in content.chars() {
-        match ch {
-            '{' => in_braces += 1,
-            '}' => in_braces -= 1,
-            '&' if in_braces > 0 => return true,
-            _ => {}
+        if check_ampersand_at_pos(ch, in_braces) {
+            return true;
         }
+        in_braces = update_brace_depth(ch, in_braces);
     }
     false
 }
@@ -131,5 +150,42 @@ mod tests {
     fn test_nested_rules_without_ampersand_is_not_scss() {
         // Nested rules but no & and no other SCSS indicators → false
         assert!(!looks_like_scss(".a { .b { color: red; } }"));
+    }
+
+    // ---- Tests for new helper functions ----
+
+    #[test]
+    fn test_check_ampersand_at_pos_inside_braces() {
+        assert!(check_ampersand_at_pos('&', 1));
+        assert!(check_ampersand_at_pos('&', 2));
+    }
+
+    #[test]
+    fn test_check_ampersand_at_pos_outside_braces() {
+        assert!(!check_ampersand_at_pos('&', 0));
+    }
+
+    #[test]
+    fn test_check_ampersand_at_pos_non_ampersand() {
+        assert!(!check_ampersand_at_pos('{', 1));
+        assert!(!check_ampersand_at_pos('a', 1));
+    }
+
+    #[test]
+    fn test_update_brace_depth_open() {
+        assert_eq!(update_brace_depth('{', 0), 1);
+        assert_eq!(update_brace_depth('{', 2), 3);
+    }
+
+    #[test]
+    fn test_update_brace_depth_close() {
+        assert_eq!(update_brace_depth('}', 1), 0);
+        assert_eq!(update_brace_depth('}', 3), 2);
+    }
+
+    #[test]
+    fn test_update_brace_depth_other() {
+        assert_eq!(update_brace_depth('a', 1), 1);
+        assert_eq!(update_brace_depth('&', 2), 2);
     }
 }

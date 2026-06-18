@@ -23,6 +23,55 @@ pub fn current_conv_id_for_action(current_id: &Option<String>) -> Option<String>
     current_id.clone()
 }
 
+/// 计算标题包装器的 CSS 类名。
+fn header_wrapper_class(
+    hovered: bool,
+    menu_open: bool,
+    base: dioxus_style::CssClass,
+    active: dioxus_style::CssClass,
+) -> dioxus_style::CssClass {
+    if hovered || menu_open {
+        base + active
+    } else {
+        base
+    }
+}
+
+/// 渲染对话头部的下拉菜单（重命名/删除）。
+fn render_header_actions(
+    is_menu_open: bool,
+    dropdown_class: dioxus_style::CssClass,
+    item_class: dioxus_style::CssClass,
+    item_danger_class: dioxus_style::CssClass,
+    rename_text: &str,
+    delete_text: &str,
+    on_rename: impl FnMut(MouseEvent) + 'static,
+    on_delete: impl FnMut(MouseEvent) + 'static,
+) -> Element {
+    if is_menu_open {
+        rsx! {
+            div {
+                class: "{dropdown_class}",
+                onclick: |e| e.stop_propagation(),
+                div {
+                    class: "{item_class}",
+                    onclick: on_rename,
+                    Icon { data: tabler::Pencil, size: "16" }
+                    span { "{rename_text}" }
+                }
+                div {
+                    class: "{item_danger_class}",
+                    onclick: on_delete,
+                    Icon { data: tabler::Trash, size: "16" }
+                    span { "{delete_text}" }
+                }
+            }
+        }
+    } else {
+        rsx! { {} }
+    }
+}
+
 #[with_css(css, "styles/components/conversation.scss")]
 /// 对话头部组件，显示标题和下拉菜单。
 #[component]
@@ -30,15 +79,6 @@ pub fn ConversationHeader(
     /// 对话标题
     title: String,
 ) -> Element {
-    /// 计算标题包装器的 CSS 类名。
-    fn header_wrapper_class(hovered: bool, menu_open: bool) -> dioxus_style::CssClass {
-        if hovered || menu_open {
-            css::conv_header_title_wrapper + css::conv_header_title_wrapper_active
-        } else {
-            css::conv_header_title_wrapper
-        }
-    }
-
     /// 计算标题文本的 CSS 类名。
     fn header_title_class(hovered: bool, menu_open: bool) -> dioxus_style::CssClass {
         if menu_open {
@@ -99,7 +139,7 @@ pub fn ConversationHeader(
     let hovered = *is_hovered.read();
     let menu_open = *is_menu_open;
 
-    let h_wrapper_class = header_wrapper_class(hovered, menu_open);
+    let h_wrapper_class = header_wrapper_class(hovered, menu_open, css::conv_header_title_wrapper, css::conv_header_title_wrapper_active);
     let h_title_class = header_title_class(hovered, menu_open);
     let h_arrow_class = header_arrow_class(hovered, menu_open);
 
@@ -125,30 +165,16 @@ pub fn ConversationHeader(
                     class: "{h_arrow_class}",
                     Icon { data: tabler::ChevronDown, size: "14" }
                 }
-                {
-                    if *is_menu_open {
-                            rsx! {
-                                div {
-                                    class: "{css::conv_header_dropdown}",
-                                    onclick: |e| e.stop_propagation(),
-                                div {
-                                    class: "{css::conv_header_menu_item}",
-                                    onclick: rename_action,
-                                    Icon { data: tabler::Pencil, size: "16" }
-                                    span { "{rename_text}" }
-                                }
-                                div {
-                                    class: "{css::conv_header_menu_item_danger}",
-                                    onclick: delete_action,
-                                    Icon { data: tabler::Trash, size: "16" }
-                                    span { "{delete_text}" }
-                                }
-                            }
-                        }
-                    } else {
-                        rsx! { {} }
-                    }
-                }
+                {render_header_actions(
+                    menu_open,
+                    css::conv_header_dropdown,
+                    css::conv_header_menu_item,
+                    css::conv_header_menu_item_danger,
+                    &rename_text,
+                    &delete_text,
+                    rename_action,
+                    delete_action,
+                )}
             }
         }
     }

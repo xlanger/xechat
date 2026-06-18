@@ -29,6 +29,55 @@ pub fn next_menu_id(open_menu_id: &Option<String>, conv_id: &str) -> Option<Stri
     }
 }
 
+/// 计算更多按钮的 CSS 类名。
+fn item_more_btn_class(
+    is_menu_open: bool,
+    hovered: bool,
+    base: dioxus_style::CssClass,
+    visible: dioxus_style::CssClass,
+) -> dioxus_style::CssClass {
+    if is_menu_open || hovered {
+        base + visible
+    } else {
+        base
+    }
+}
+
+/// 渲染对话项的右键上下文菜单（重命名/删除）。
+fn render_context_menu(
+    is_menu_open: bool,
+    menu_class: dioxus_style::CssClass,
+    item_class: dioxus_style::CssClass,
+    item_danger_class: dioxus_style::CssClass,
+    rename_text: &str,
+    delete_text: &str,
+    on_rename: impl FnMut(MouseEvent) + 'static,
+    on_delete: impl FnMut(MouseEvent) + 'static,
+) -> Element {
+    if is_menu_open {
+        rsx! {
+            div {
+                class: "{menu_class}",
+                onclick: |e| e.stop_propagation(),
+                div {
+                    class: "{item_class}",
+                    onclick: on_rename,
+                    Icon { data: tabler::Pencil, size: "16" }
+                    span { "{rename_text}" }
+                }
+                div {
+                    class: "{item_danger_class}",
+                    onclick: on_delete,
+                    Icon { data: tabler::Trash, size: "16" }
+                    span { "{delete_text}" }
+                }
+            }
+        }
+    } else {
+        rsx! { {} }
+    }
+}
+
 #[with_css(css, "styles/components/conversation.scss")]
 /// 对话列表项组件，支持选中、悬停和右键菜单（重命名/删除）操作。
 #[component]
@@ -57,15 +106,6 @@ pub fn ConversationItem(
             css::conv_item_title + css::conv_item_title_hover
         } else {
             css::conv_item_title
-        }
-    }
-
-    /// 计算更多按钮的 CSS 类名。
-    fn item_more_btn_class(is_menu_open: bool, hovered: bool) -> dioxus_style::CssClass {
-        if is_menu_open || hovered {
-            css::conv_item_more_btn + css::conv_item_more_btn_visible
-        } else {
-            css::conv_item_more_btn
         }
     }
 
@@ -129,7 +169,7 @@ pub fn ConversationItem(
 
     let i_class = item_inner_class(is_active, hovered);
     let t_class = item_title_class(is_active, hovered);
-    let m_btn_class = item_more_btn_class(is_menu_open, hovered);
+    let m_btn_class = item_more_btn_class(is_menu_open, hovered, css::conv_item_more_btn, css::conv_item_more_btn_visible);
 
     rsx! {
         div {
@@ -149,30 +189,16 @@ pub fn ConversationItem(
                     onclick: toggle_menu,
                     Icon { data: tabler::DotsVertical, size: "16" }
                 }
-                {
-                    if is_menu_open {
-                        rsx! {
-                            div {
-                                class: "{css::conv_item_menu}",
-                                onclick: |e| e.stop_propagation(),
-                                div {
-                                    class: "{css::conv_item_menu_item}",
-                                    onclick: rename_action,
-                                    Icon { data: tabler::Pencil, size: "16" }
-                                    span { "{rename_text}" }
-                                }
-                                div {
-                                    class: "{css::conv_item_menu_item_danger}",
-                                    onclick: delete_action,
-                                    Icon { data: tabler::Trash, size: "16" }
-                                    span { "{delete_text}" }
-                                }
-                            }
-                        }
-                    } else {
-                        rsx! { {} }
-                    }
-                }
+                {render_context_menu(
+                    is_menu_open,
+                    css::conv_item_menu,
+                    css::conv_item_menu_item,
+                    css::conv_item_menu_item_danger,
+                    &rename_text,
+                    &delete_text,
+                    rename_action,
+                    delete_action,
+                )}
             }
         }
     }

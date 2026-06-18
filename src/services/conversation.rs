@@ -137,54 +137,84 @@ pub fn write_file(path: &PathBuf, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 从磁盘读取索引文件内容并解析为 HashMap。
+///
+/// 文件不存在或为空时返回空 HashMap，解析失败时重置为空。
+fn read_index_file(path: &std::path::Path) -> HashMap<String, String> {
+    if !path.exists() {
+        return HashMap::new();
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    if content.trim().is_empty() {
+        return HashMap::new();
+    }
+    serde_json::from_str(&content).unwrap_or_else(|e| {
+        eprintln!("[xechat] Corrupted conversations index, resetting: {}", e);
+        HashMap::new()
+    })
+}
+
+/// 尝试从单个对话目录解析元数据（id → title）。
+///
+/// 目录下必须包含 `conversation.json` 且内容可解析，否则返回 `None`。
+fn parse_conversation_dir_entry(path: &std::path::Path) -> Option<(String, String)> {
+    if !path.is_dir() {
+        return None;
+    }
+    let conv_id = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    if conv_id.is_empty() {
+        return None;
+    }
+    let conv_file = path.join("conversation.json");
+    let content = std::fs::read_to_string(&conv_file).ok()?;
+    let conv = serde_json::from_str::<Conversation>(&content).ok()?;
+    Some((conv_id, conv.title))
+}
+
+/// 扫描对话目录，将所有可解析的对话元数据插入索引。
+///
+/// 返回是否恢复了至少一条记录。
+fn scan_conversation_dir(conv_dir: &std::path::Path, index: &mut HashMap<String, String>) -> bool {
+    let entries = match std::fs::read_dir(conv_dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let mut recovered = false;
+    for entry in entries.flatten() {
+        if let Some((id, title)) = parse_conversation_dir_entry(&entry.path()) {
+            index.insert(id, title);
+            recovered = true;
+        }
+    }
+    recovered
+}
+
+/// 尝试从磁盘对话文件恢复索引。
+///
+/// 当索引为空但对话目录存在时，扫描目录中的 conversation.json 文件重建索引。
+/// 返回恢复后的索引和是否执行了恢复。
+fn recover_index_from_disk(index: &mut HashMap<String, String>) -> bool {
+    if !index.is_empty() {
+        return false;
+    }
+    let conv_dir = paths::get_app_dir().join("conversations");
+    if !conv_dir.exists() {
+        return false;
+    }
+    scan_conversation_dir(&conv_dir, index)
+}
+
 pub fn load_conversations_index() -> Result<HashMap<String, String>, String> {
     paths::ensure_app_dir()?;
     let path = paths::get_conversations_index_path();
-    let mut index = if !path.exists() {
-        HashMap::new()
-    } else {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read conversations index: {}", e))?;
-        if content.trim().is_empty() {
-            HashMap::new()
-        } else {
-            serde_json::from_str(&content).unwrap_or_else(|e| {
-                eprintln!("[xechat] Corrupted conversations index, resetting: {}", e);
-                HashMap::new()
-            })
-        }
-    };
+    let mut index = read_index_file(&path);
 
-    // Auto-recovery: if index is empty but conversation files exist, rebuild index
-    if index.is_empty() {
-        let conv_dir = paths::get_app_dir().join("conversations");
-        if conv_dir.exists() {
-            let mut recovered = false;
-            if let Ok(entries) = std::fs::read_dir(&conv_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        let conv_id = path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if !conv_id.is_empty() {
-                            let conv_file = path.join("conversation.json");
-                            if conv_file.exists()
-                                && let Ok(content) = std::fs::read_to_string(&conv_file)
-                                    && let Ok(conv) = serde_json::from_str::<Conversation>(&content) {
-                                        index.insert(conv_id, conv.title);
-                                        recovered = true;
-                                    }
-                        }
-                    }
-                }
-            }
-            if recovered {
-                eprintln!("[xechat] Recovered {} conversations from disk", index.len());
-                let _ = save_conversations_index(&index);
-            }
-        }
+    if recover_index_from_disk(&mut index) {
+        eprintln!("[xechat] Recovered {} conversations from disk", index.len());
+        let _ = save_conversations_index(&index);
     }
 
     Ok(index)
@@ -195,6 +225,36 @@ fn save_conversations_index(index: &HashMap<String, String>) -> Result<(), Strin
     let json = serde_json::to_string_pretty(index)
         .map_err(|e| format!("Failed to serialize index: {}", e))?;
     write_file(&paths::get_conversations_index_path(), &json)
+}
+
+/// 尝试从文件读取并解析对话，失败返回 None。
+fn try_read_conversation(file_path: &std::path::Path) -> Option<Conversation> {
+    let content = std::fs::read_to_string(file_path).ok()?;
+    serde_json::from_str::<Conversation>(&content).ok()
+}
+
+/// 创建默认空对话。
+fn default_conversation(id: &str, title: &str) -> Conversation {
+    Conversation {
+        id: id.to_string(),
+        title: title.to_string(),
+        messages: Vec::new(),
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        is_temporary: false,
+    }
+}
+
+/// 从索引条目加载单个对话。
+///
+/// 文件存在时解析 JSON，不存在时创建默认对话，损坏时跳过。
+fn load_single_conversation(id: &str, title: &str) -> Conversation {
+    let file_path = paths::get_conversation_file(id);
+    if file_path.exists() {
+        try_read_conversation(&file_path).unwrap_or_else(|| default_conversation(id, title))
+    } else {
+        default_conversation(id, title)
+    }
 }
 
 /// 加载所有对话及其完整消息内容。
@@ -212,31 +272,10 @@ fn save_conversations_index(index: &HashMap<String, String>) -> Result<(), Strin
 /// 个别对话文件损坏时会跳过并打印警告，不影响整体返回。
 pub fn load_conversations() -> Result<Vec<Conversation>, String> {
     let index = load_conversations_index()?;
-    let mut conversations: Vec<Conversation> = Vec::new();
-
-    for (id, title) in &index {
-        let file_path = paths::get_conversation_file(id);
-        if file_path.exists() {
-            match std::fs::read_to_string(&file_path) {
-                Ok(content) => {
-                    match serde_json::from_str::<Conversation>(&content) {
-                        Ok(conv) => conversations.push(conv),
-                        Err(e) => eprintln!("[xechat] Skipping corrupted conversation {}: {}", id, e),
-                    }
-                }
-                Err(e) => eprintln!("[xechat] Failed to read conversation {}: {}", id, e),
-            }
-        } else {
-            conversations.push(Conversation {
-                id: id.clone(),
-                title: title.clone(),
-                messages: Vec::new(),
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
-                is_temporary: false,
-            });
-        }
-    }
+    let mut conversations: Vec<Conversation> = index
+        .iter()
+        .map(|(id, title)| load_single_conversation(id, title))
+        .collect();
 
     conversations.sort_by_key(|b| Reverse(b.updated_at));
     Ok(conversations)

@@ -1,12 +1,12 @@
 use xechat::platform::SystemTheme;
 
-/// 模拟 linux 模块的 parse_gtk4_theme_line 函数。
-/// 由于 linux 模块仅在 target_os = "linux" 下编译，
-/// 这里直接复制函数逻辑进行测试。
-fn parse_gtk4_theme_line(line: &str) -> Option<SystemTheme> {
-    if !line.starts_with("gtk-application-prefer-dark-theme") {
-        return None;
-    }
+/// 检查行是否为 GTK4 暗色主题配置键。
+fn extract_theme_key(line: &str) -> bool {
+    line.starts_with("gtk-application-prefer-dark-theme")
+}
+
+/// 从配置行中解析主题值（true/1 → Dark，false/0 → Light，其余 → None）。
+fn extract_theme_value(line: &str) -> Option<SystemTheme> {
     if line.contains("=true") || line.contains("=1") {
         Some(SystemTheme::Dark)
     } else if line.contains("=false") || line.contains("=0") {
@@ -14,6 +14,16 @@ fn parse_gtk4_theme_line(line: &str) -> Option<SystemTheme> {
     } else {
         None
     }
+}
+
+/// 模拟 linux 模块的 parse_gtk4_theme_line 函数。
+/// 由于 linux 模块仅在 target_os = "linux" 下编译，
+/// 这里直接复制函数逻辑进行测试。
+fn parse_gtk4_theme_line(line: &str) -> Option<SystemTheme> {
+    if !extract_theme_key(line) {
+        return None;
+    }
+    extract_theme_value(line)
 }
 
 // ── parse_gtk4_theme_line ──────────────────────────────────────

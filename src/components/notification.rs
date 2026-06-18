@@ -12,40 +12,63 @@ pub fn toast_duration(toast: Option<&crate::stores::ui::Toast>) -> u64 {
     toast.map(|t| t.duration_ms).unwrap_or(3000)
 }
 
+/// 调度通知自动消失定时器，先等待 duration_ms 后隐藏，再等待 400ms 后清除 toast。
+fn compute_notification_duration(
+    duration: u64,
+    mut visible: Signal<bool>,
+    mut active_toast: Signal<Option<crate::stores::ui::Toast>>,
+) {
+    spawn(async move {
+        tokio::time::sleep(Duration::from_millis(duration)).await;
+        visible.set(false);
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            active_toast.set(None);
+        });
+    });
+}
+
+/// 渲染通知主体内容（图标 + 消息 + 关闭按钮）。
+fn render_notification_body(
+    toast_data: &crate::stores::ui::Toast,
+    visible: bool,
+    toast_base_class: dioxus_style::CssClass,
+    info_toast_class: dioxus_style::CssClass,
+    success_toast_class: dioxus_style::CssClass,
+    error_toast_class: dioxus_style::CssClass,
+    icon_base_class: dioxus_style::CssClass,
+    info_icon_class: dioxus_style::CssClass,
+    success_icon_class: dioxus_style::CssClass,
+    error_icon_class: dioxus_style::CssClass,
+    message_class: dioxus_style::CssClass,
+    close_class: dioxus_style::CssClass,
+    visible_class: dioxus_style::CssClass,
+    hidden_class: dioxus_style::CssClass,
+    on_close: impl FnMut(MouseEvent) + 'static,
+) -> Element {
+    let (toast_kind_class, icon_kind_class, icon) = match toast_data.kind {
+        ToastKind::Info => (info_toast_class, info_icon_class, "\u{2139}"),
+        ToastKind::Success => (success_toast_class, success_icon_class, "\u{2713}"),
+        ToastKind::Error => (error_toast_class, error_icon_class, "\u{2715}"),
+    };
+    let vis_class = if visible { visible_class } else { hidden_class };
+    rsx! {
+        div {
+            class: "{toast_base_class} {toast_kind_class} {vis_class}",
+            span { class: "{icon_base_class} {icon_kind_class}", "{icon}" }
+            span { class: "{message_class}", "{toast_data.message}" }
+            span {
+                class: "{close_class}",
+                onclick: on_close, "\u{2715}"
+            }
+        }
+    }
+}
+
 #[with_css(css, "styles/components/notification.scss")]
 /// 通知组件，以 Toast 形式展示信息、成功或错误提示，支持自动消失。
 #[component]
 pub fn Notification() -> Element {
-    /// 根据 ToastKind 返回 (toast_class, icon_class, icon_char) 三元组。
-    fn toast_kind_styles(kind: ToastKind) -> (dioxus_style::CssClass, dioxus_style::CssClass, &'static str) {
-        match kind {
-            ToastKind::Info => (
-                css::notification_toast_info,
-                css::notification_icon_info,
-                "\u{2139}",
-            ),
-            ToastKind::Success => (
-                css::notification_toast_success,
-                css::notification_icon_success,
-                "\u{2713}",
-            ),
-            ToastKind::Error => (
-                css::notification_toast_error,
-                css::notification_icon_error,
-                "\u{2715}",
-            ),
-        }
-    }
-
-    /// 获取可见性对应的 CSS 类名。
-    fn visibility_class(visible: bool) -> dioxus_style::CssClass {
-        if visible {
-            css::notification_toast_visible
-        } else {
-            css::notification_toast_hidden
-        }
-    }
-
     let mut ui_store = use_ui();
 
     let mut visible = use_signal(|| false);
@@ -54,14 +77,7 @@ pub fn Notification() -> Element {
         if ui_store.active_toast.read().is_some() {
             visible.set(true);
             let duration = toast_duration(ui_store.active_toast.read().as_ref());
-            spawn(async move {
-                tokio::time::sleep(Duration::from_millis(duration)).await;
-                visible.set(false);
-                spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(400)).await;
-                    ui_store.active_toast.set(None);
-                });
-            });
+            compute_notification_duration(duration, visible, ui_store.active_toast);
         }
     });
 
@@ -71,21 +87,23 @@ pub fn Notification() -> Element {
     }
     let toast_data = toast_data.as_ref().unwrap();
 
-    let (toast_kind_class, icon_kind_class, icon) = toast_kind_styles(toast_data.kind);
-
-    let vis_class = visibility_class(visible());
-
     let close = move |_| { ui_store.active_toast.set(None); };
 
-    rsx! {
-        div {
-            class: "{css::notification_toast} {toast_kind_class} {vis_class}",
-            span { class: "{css::notification_icon} {icon_kind_class}", "{icon}" }
-            span { class: "{css::notification_message}", "{toast_data.message}" }
-            span {
-                class: "{css::notification_close}",
-                onclick: close, "\u{2715}"
-            }
-        }
-    }
+    render_notification_body(
+        toast_data,
+        visible(),
+        css::notification_toast,
+        css::notification_toast_info,
+        css::notification_toast_success,
+        css::notification_toast_error,
+        css::notification_icon,
+        css::notification_icon_info,
+        css::notification_icon_success,
+        css::notification_icon_error,
+        css::notification_message,
+        css::notification_close,
+        css::notification_toast_visible,
+        css::notification_toast_hidden,
+        close,
+    )
 }

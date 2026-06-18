@@ -57,6 +57,28 @@ fn escape_sql(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// 为查询应用排序和分页参数。
+fn apply_pagination(
+    query: lancedb::query::Query,
+    order_by: Option<Vec<ColumnOrdering>>,
+    offset: Option<usize>,
+) -> lancedb::query::Query {
+    let query = match order_by {
+        Some(ordering) => query.order_by(Some(ordering)),
+        None => query,
+    };
+    match offset {
+        Some(off) => query.offset(off),
+        None => query,
+    }
+}
+
+/// 从 RecordBatch 中按列名提取 StringArray 列，类型不匹配时返回 None。
+fn parse_column_value<'a>(batch: &'a RecordBatch, name: &str) -> Option<&'a StringArray> {
+    batch.column_by_name(name)
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+}
+
 /// 需要迁移的列定义：(列名, SQL 默认值表达式)。
 const REQUIRED_COLUMNS: [(&str, &str); 1] = [
     ("reasoning_content", "''"),
@@ -299,6 +321,55 @@ impl ConversationStore {
         ]))
     }
 
+    /// 将 MessageRole 序列化为存储字符串。
+    fn serialize_role(role: &MessageRole) -> &'static str {
+        match role {
+            MessageRole::User => "User",
+            MessageRole::Assistant => "Assistant",
+        }
+    }
+
+    /// 将 MessageStatus 序列化为存储字符串。
+    fn serialize_status(status: &MessageStatus) -> &'static str {
+        match status {
+            MessageStatus::Sending => "Sending",
+            MessageStatus::Sent => "Sent",
+            MessageStatus::Failed => "Failed",
+            MessageStatus::Truncated => "Truncated",
+        }
+    }
+
+    /// 构建空对话的占位消息字段。
+    fn build_empty_message_fields(conv: &Conversation) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+        (
+            vec![format!("{}__empty", conv.id)],
+            vec!["system".to_string()],
+            vec![String::new()],
+            vec![String::new()],
+            vec!["Sent".to_string()],
+            vec![conv.created_at.to_rfc3339()],
+        )
+    }
+
+    /// 从消息列表构建消息字段（msg_ids, roles, contents, reasoning_contents, statuses, timestamps）。
+    fn build_message_fields(messages: &[Message], max_msgs: usize) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+        let mut msg_ids = Vec::with_capacity(max_msgs);
+        let mut roles = Vec::with_capacity(max_msgs);
+        let mut contents = Vec::with_capacity(max_msgs);
+        let mut reasoning_contents = Vec::with_capacity(max_msgs);
+        let mut statuses = Vec::with_capacity(max_msgs);
+        let mut timestamps = Vec::with_capacity(max_msgs);
+        for m in messages.iter().take(max_msgs) {
+            msg_ids.push(m.id.clone());
+            roles.push(Self::serialize_role(&m.role).to_string());
+            contents.push(m.content.clone());
+            reasoning_contents.push(m.reasoning_content.clone().unwrap_or_default());
+            statuses.push(Self::serialize_status(&m.status).to_string());
+            timestamps.push(m.timestamp.to_rfc3339());
+        }
+        (msg_ids, roles, contents, reasoning_contents, statuses, timestamps)
+    }
+
     fn message_to_batch_limited(conv: &Conversation, max_msgs: usize) -> anyhow::Result<RecordBatch> {
         let schema = Self::arrow_schema();
         let msg_count = conv.messages.len().max(1).min(max_msgs);
@@ -316,42 +387,12 @@ impl ConversationStore {
             .take(msg_count)
             .collect();
 
-        let (msg_ids, roles, contents, reasoning_contents, statuses, timestamps): (
-            Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>,
-        ) = if conv.messages.is_empty() {
-            (
-                vec![format!("{}__empty", conv.id)],
-                vec!["system".to_string()],
-                vec![String::new()],
-                vec![String::new()],
-                vec!["Sent".to_string()],
-                vec![conv.created_at.to_rfc3339()],
-            )
-        } else {
-            let mut msg_ids = Vec::with_capacity(msg_count);
-            let mut roles = Vec::with_capacity(msg_count);
-            let mut contents = Vec::with_capacity(msg_count);
-            let mut reasoning_contents = Vec::with_capacity(msg_count);
-            let mut statuses = Vec::with_capacity(msg_count);
-            let mut timestamps = Vec::with_capacity(msg_count);
-            for m in conv.messages.iter().take(max_msgs) {
-                msg_ids.push(m.id.clone());
-                roles.push(match m.role {
-                    MessageRole::User => "User".to_string(),
-                    MessageRole::Assistant => "Assistant".to_string(),
-                });
-                contents.push(m.content.clone());
-                reasoning_contents.push(m.reasoning_content.clone().unwrap_or_default());
-                statuses.push(match m.status {
-                    MessageStatus::Sending => "Sending".to_string(),
-                    MessageStatus::Sent => "Sent".to_string(),
-                    MessageStatus::Failed => "Failed".to_string(),
-                    MessageStatus::Truncated => "Truncated".to_string(),
-                });
-                timestamps.push(m.timestamp.to_rfc3339());
-            }
-            (msg_ids, roles, contents, reasoning_contents, statuses, timestamps)
-        };
+        let (msg_ids, roles, contents, reasoning_contents, statuses, timestamps) =
+            if conv.messages.is_empty() {
+                Self::build_empty_message_fields(conv)
+            } else {
+                Self::build_message_fields(&conv.messages, max_msgs)
+            };
 
         Ok(RecordBatch::try_new(schema, vec![
             Arc::new(conv_ids),
@@ -371,40 +412,173 @@ impl ConversationStore {
         Self::message_to_batch_limited(conv, usize::MAX)
     }
 
+    /// 从 RecordBatch 中提取所需的列引用。
+    ///
+    /// 返回所有列的引用元组，`conversation_id` 列为必需（缺失返回 None）。
+    fn extract_batch_columns(batch: &RecordBatch) -> Option<(
+        &StringArray,
+        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
+        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
+        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
+    )> {
+        let conv_ids = batch.column_by_name("conversation_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
+        let titles = batch.column_by_name("title")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let created_ats = batch.column_by_name("created_at")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let updated_ats = batch.column_by_name("updated_at")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let msg_ids = batch.column_by_name("message_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let roles = batch.column_by_name("role")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let contents = batch.column_by_name("content")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let reasoning_contents = batch.column_by_name("reasoning_content")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let statuses = batch.column_by_name("status")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let timestamps = batch.column_by_name("timestamp")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        Some((conv_ids, titles, created_ats, updated_ats, msg_ids, roles, contents, reasoning_contents, statuses, timestamps))
+    }
+
+    /// 解析行中的对话元数据，更新或插入到 conv_map。
+    fn upsert_conversation_meta(
+        conv_map: &mut std::collections::HashMap<String, Conversation>,
+        conv_id: &str,
+        title: &str,
+        created_at: DateTime<Utc>,
+        row_updated_at: DateTime<Utc>,
+    ) {
+        use std::collections::hash_map::Entry;
+        let entry = conv_map.entry(conv_id.to_string()).or_insert_with(|| Conversation {
+            id: conv_id.to_string(),
+            title: title.to_string(),
+            messages: Vec::new(),
+            created_at,
+            updated_at: row_updated_at,
+            is_temporary: false,
+        });
+        if row_updated_at > entry.updated_at {
+            entry.updated_at = row_updated_at;
+            if !title.is_empty() {
+                entry.title = title.to_string();
+            }
+        }
+    }
+
+    /// 解析消息角色字符串为枚举。
+    fn parse_message_role(role: &str) -> MessageRole {
+        match role {
+            "User" => MessageRole::User,
+            _ => MessageRole::Assistant,
+        }
+    }
+
+    /// 解析消息状态字符串为枚举。
+    fn parse_message_status(status: &str) -> MessageStatus {
+        match status {
+            "Sending" => MessageStatus::Sending,
+            "Failed" => MessageStatus::Failed,
+            "Truncated" => MessageStatus::Truncated,
+            _ => MessageStatus::Sent,
+        }
+    }
+
+    /// 从行数据构建 Message 对象。
+    ///
+    /// 返回 `Some(Message)` 如果行包含有效消息（非 __empty 占位行），
+    /// 返回 `None` 如果行缺少必要列或为占位行。
+    fn build_message_from_row(
+        msg_ids: Option<&StringArray>,
+        roles: Option<&StringArray>,
+        contents: Option<&StringArray>,
+        reasoning_contents: Option<&StringArray>,
+        statuses: Option<&StringArray>,
+        timestamps: Option<&StringArray>,
+        i: usize,
+    ) -> Option<Message> {
+        let msg_ids_arr = msg_ids?;
+        let msg_id = msg_ids_arr.value(i).to_string();
+        if msg_id.ends_with("__empty") {
+            return None;
+        }
+
+        let role = roles.map(|a| a.value(i)).unwrap_or("Assistant");
+        let content = contents.map(|a| a.value(i)).unwrap_or("");
+        let reasoning_content = reasoning_contents
+            .map(|a| a.value(i))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let status = statuses.map(|a| a.value(i)).unwrap_or("Sent");
+        let timestamp = timestamps
+            .map(|a| DateTime::parse_from_rfc3339(a.value(i)).map(|dt| dt.with_timezone(&Utc)).unwrap_or_default())
+            .unwrap_or_default();
+
+        Some(Message {
+            id: msg_id,
+            role: Self::parse_message_role(role),
+            content: content.to_string(),
+            reasoning_content,
+            timestamp,
+            status: Self::parse_message_status(status),
+        })
+    }
+
+    /// 将消息合并到临时消息映射中（去重 + 保留最新版本）。
+    fn merge_message_entry(
+        msg_map: &mut std::collections::HashMap<String, Message>,
+        msg: Message,
+    ) {
+        use std::collections::hash_map::Entry;
+        match msg_map.entry(msg.id.clone()) {
+            Entry::Occupied(mut e) => {
+                let existing = e.get_mut();
+                if msg.content.len() > existing.content.len() || msg.timestamp > existing.timestamp {
+                    *existing = msg;
+                }
+            }
+            Entry::Vacant(e) => {
+                e.insert(msg);
+            }
+        }
+    }
+
+    /// 将消息映射中的消息按时间排序并附加到对应对话。
+    fn attach_messages_to_conversations(
+        conv_map: &mut std::collections::HashMap<String, Conversation>,
+        temp_msg_map: std::collections::HashMap<String, std::collections::HashMap<String, Message>>,
+    ) {
+        for (conv_id, msg_map) in temp_msg_map {
+            if let Some(entry) = conv_map.get_mut(&conv_id) {
+                let mut messages: Vec<Message> = msg_map.into_values().collect();
+                messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                entry.messages = messages;
+            }
+        }
+    }
+
+    /// 按更新时间降序排列对话列表。
+    fn sort_conversations_by_date(convs: &mut Vec<Conversation>) {
+        convs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    }
+
     fn batches_to_conversations(batches: &[RecordBatch]) -> Vec<Conversation> {
-        use std::collections::{HashMap, hash_map::Entry};
+        use std::collections::HashMap;
 
         let mut conv_map: HashMap<String, Conversation> = HashMap::new();
         let mut temp_msg_map: HashMap<String, HashMap<String, Message>> = HashMap::new();
 
         for batch in batches {
-            let conv_ids = batch.column_by_name("conversation_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let titles = batch.column_by_name("title")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let created_ats = batch.column_by_name("created_at")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let updated_ats = batch.column_by_name("updated_at")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let msg_ids = batch.column_by_name("message_id")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let roles = batch.column_by_name("role")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let contents = batch.column_by_name("content")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let reasoning_contents = batch.column_by_name("reasoning_content")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let statuses = batch.column_by_name("status")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
-            let timestamps = batch.column_by_name("timestamp")
-                .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let Some((conv_ids, titles, created_ats, updated_ats, msg_ids, roles, contents, reasoning_contents, statuses, timestamps)) =
+                Self::extract_batch_columns(batch) else { continue };
 
-            let Some(conv_ids) = conv_ids else { continue };
             let row_count = conv_ids.len();
 
             for i in 0..row_count {
                 let conv_id = conv_ids.value(i).to_string();
-
                 let title = titles.map(|a| a.value(i)).unwrap_or("");
                 let created_at = created_ats
                     .map(|a| DateTime::parse_from_rfc3339(a.value(i)).map(|dt| dt.with_timezone(&Utc)).unwrap_or_default())
@@ -413,88 +587,19 @@ impl ConversationStore {
                     .map(|a| DateTime::parse_from_rfc3339(a.value(i)).map(|dt| dt.with_timezone(&Utc)).unwrap_or_default())
                     .unwrap_or_default();
 
-                let entry = conv_map.entry(conv_id.clone()).or_insert_with(|| Conversation {
-                    id: conv_id.clone(),
-                    title: title.to_string(),
-                    messages: Vec::new(),
-                    created_at,
-                    updated_at: row_updated_at,
-                    is_temporary: false,
-                });
+                Self::upsert_conversation_meta(&mut conv_map, &conv_id, title, created_at, row_updated_at);
 
-                if row_updated_at > entry.updated_at {
-                    entry.updated_at = row_updated_at;
-                    if !title.is_empty() {
-                        entry.title = title.to_string();
-                    }
-                }
-
-                let Some(msg_ids_arr) = msg_ids else { continue };
-                let msg_id = msg_ids_arr.value(i).to_string();
-                if msg_id.ends_with("__empty") {
-                    continue;
-                }
-
-                let role = roles.map(|a| a.value(i)).unwrap_or("Assistant");
-                let content = contents.map(|a| a.value(i)).unwrap_or("");
-                let reasoning_content = reasoning_contents
-                    .map(|a| a.value(i))
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string());
-                let status = statuses.map(|a| a.value(i)).unwrap_or("Sent");
-                let timestamp = timestamps
-                    .map(|a| DateTime::parse_from_rfc3339(a.value(i)).map(|dt| dt.with_timezone(&Utc)).unwrap_or_default())
-                    .unwrap_or_default();
-
-                let role = match role {
-                    "User" => MessageRole::User,
-                    _ => MessageRole::Assistant,
-                };
-                let status = match status {
-                    "Sending" => MessageStatus::Sending,
-                    "Failed" => MessageStatus::Failed,
-                    "Truncated" => MessageStatus::Truncated,
-                    _ => MessageStatus::Sent,
-                };
-                let content = content.to_string();
-
-                let msg_map = temp_msg_map.entry(conv_id).or_insert_with(HashMap::new);
-                match msg_map.entry(msg_id) {
-                    Entry::Occupied(mut e) => {
-                        let existing = e.get_mut();
-                        if content.len() > existing.content.len() || timestamp > existing.timestamp {
-                            existing.content = content;
-                            existing.reasoning_content = reasoning_content;
-                            existing.role = role;
-                            existing.status = status;
-                            existing.timestamp = timestamp;
-                        }
-                    }
-                    Entry::Vacant(e) => {
-                        let msg_id = e.key().clone();
-                        e.insert(Message {
-                            id: msg_id,
-                            role,
-                            content,
-                            reasoning_content,
-                            timestamp,
-                            status,
-                        });
-                    }
+                if let Some(msg) = Self::build_message_from_row(msg_ids, roles, contents, reasoning_contents, statuses, timestamps, i) {
+                    let msg_map = temp_msg_map.entry(conv_id).or_insert_with(HashMap::new);
+                    Self::merge_message_entry(msg_map, msg);
                 }
             }
         }
 
-        for (conv_id, msg_map) in temp_msg_map {
-            if let Some(entry) = conv_map.get_mut(&conv_id) {
-                let mut messages: Vec<Message> = msg_map.into_values().collect();
-                messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-                entry.messages = messages;
-            }
-        }
+        Self::attach_messages_to_conversations(&mut conv_map, temp_msg_map);
 
         let mut convs: Vec<Conversation> = conv_map.into_values().collect();
-        convs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Self::sort_conversations_by_date(&mut convs);
         convs
     }
 
@@ -631,17 +736,11 @@ impl ConversationStore {
         let table = self.table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("table not initialized"))?;
 
-        let mut query = table
+        let query = table
             .query()
             .only_if(filter)
             .limit(limit);
-
-        if let Some(ordering) = order_by {
-            query = query.order_by(Some(ordering));
-        }
-        if let Some(off) = offset {
-            query = query.offset(off);
-        }
+        let query = apply_pagination(query, order_by, offset);
 
         let stream = query.execute().await?;
         Ok(stream.try_collect().await?)
@@ -860,12 +959,30 @@ impl ConversationStore {
         self.insert_message_row(conv_id, &meta.title, meta.created_at, Utc::now(), message).await
     }
 
-    pub async fn update_message_content(&self, conv_id: &str, msg_id: &str, new_content: &str) -> anyhow::Result<()> {
+    /// 从旧消息和新的内容构建更新后的消息。
+    fn build_updated_msg(old_msg: Option<&Message>, msg_id: &str, new_content: &str) -> Message {
+        Message {
+            id: msg_id.to_string(),
+            role: old_msg.map(|m| m.role.clone()).unwrap_or(MessageRole::Assistant),
+            content: new_content.to_string(),
+            reasoning_content: old_msg.and_then(|m| m.reasoning_content.clone()),
+            timestamp: old_msg.map(|m| m.timestamp).unwrap_or_else(|| Utc::now()),
+            status: old_msg.map(|m| m.status.clone()).unwrap_or(MessageStatus::Sent),
+        }
+    }
+
+    /// 获取对话元数据和表引用，用于更新操作。
+    async fn get_meta_and_table(&self, conv_id: &str) -> anyhow::Result<(Conversation, &lancedb::Table)> {
         let meta = self.load_conversation_meta_by_id(conv_id).await?
             .ok_or_else(|| anyhow::anyhow!("Conversation not found: {}", conv_id))?;
-
         let table = self.table.as_ref()
             .ok_or_else(|| anyhow::anyhow!("table not initialized"))?;
+        Ok((meta, table))
+    }
+
+    pub async fn update_message_content(&self, conv_id: &str, msg_id: &str, new_content: &str) -> anyhow::Result<()> {
+        let (meta, table) = self.get_meta_and_table(conv_id).await?;
+
         let predicate = format!(
             "conversation_id = '{}' AND message_id = '{}'",
             escape_sql(conv_id),
@@ -874,14 +991,7 @@ impl ConversationStore {
         table.delete(&predicate).await?;
 
         let old_msg = self.load_message_by_id(conv_id, msg_id).await?;
-        let new_msg = Message {
-            id: msg_id.to_string(),
-            role: old_msg.as_ref().map(|m| m.role.clone()).unwrap_or(MessageRole::Assistant),
-            content: new_content.to_string(),
-            reasoning_content: old_msg.as_ref().and_then(|m| m.reasoning_content.clone()),
-            timestamp: old_msg.as_ref().map(|m| m.timestamp).unwrap_or_else(|| Utc::now()),
-            status: old_msg.as_ref().map(|m| m.status.clone()).unwrap_or(MessageStatus::Sent),
-        };
+        let new_msg = Self::build_updated_msg(old_msg.as_ref(), msg_id, new_content);
 
         self.insert_message_row(conv_id, &meta.title, meta.created_at, Utc::now(), &new_msg).await
     }
@@ -935,10 +1045,30 @@ impl ConversationStore {
         let meta = self.load_conversation_meta_by_id(conv_id).await?
             .ok_or_else(|| anyhow::anyhow!("Conversation not found: {}", conv_id))?;
 
-        if let Some(old_msg) = self.load_last_message(conv_id).await? {
-            if let Some(new_msg) = Self::build_updated_message(Some(&old_msg), content, status) {
-                self.replace_message(conv_id, &meta, &mut { new_msg }, content, status).await?;
-            }
+        self.persist_updated_message(conv_id, &meta, content, status).await
+    }
+
+    /// 加载旧消息并构建更新后的消息，若旧消息不存在则返回 None。
+    async fn merge_message_content(
+        &self,
+        conv_id: &str,
+        content: &str,
+        status: MessageStatus,
+    ) -> anyhow::Result<Option<Message>> {
+        let old_msg = self.load_last_message(conv_id).await?;
+        Ok(old_msg.and_then(|old| Self::build_updated_message(Some(&old), content, status)))
+    }
+
+    /// 合并消息内容并持久化到存储。
+    async fn persist_updated_message(
+        &self,
+        conv_id: &str,
+        meta: &crate::Conversation,
+        content: &str,
+        status: MessageStatus,
+    ) -> anyhow::Result<()> {
+        if let Some(mut new_msg) = self.merge_message_content(conv_id, content, status).await? {
+            self.replace_message(conv_id, meta, &mut new_msg, content, status).await?;
         }
         Ok(())
     }
@@ -1237,17 +1367,11 @@ impl ConversationStore {
     fn extract_message_columns(
         batch: &RecordBatch,
     ) -> Option<(&StringArray, &StringArray, &StringArray, &StringArray, &StringArray)> {
-        let conv_ids = batch.column_by_name("conversation_id")
-            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
-        let msg_ids = batch.column_by_name("message_id")
-            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
-        let roles = batch.column_by_name("role")
-            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
-        let contents = batch.column_by_name("content")
-            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
-        let timestamps = batch.column_by_name("timestamp")
-            .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
-        Some((conv_ids, msg_ids, roles, contents, timestamps))
+        const NAMES: [&str; 5] = ["conversation_id", "message_id", "role", "content", "timestamp"];
+        let columns: Vec<&StringArray> = NAMES.iter()
+            .map(|&name| parse_column_value(batch, name))
+            .collect::<Option<Vec<_>>>()?;
+        Some((columns[0], columns[1], columns[2], columns[3], columns[4]))
     }
 
     /// 将按会话分组的消息 HashMap 转换为 RawTurn 列表。
@@ -1311,12 +1435,25 @@ impl ConversationStore {
     }
 
     pub async fn search_semantic(&self, query_vector: &[f32], limit: usize) -> anyhow::Result<Vec<crate::models::memory::SearchResult>> {
+        let hits = self.build_semantic_query(query_vector, limit).await;
+
+        if hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut results = Self::rank_semantic_results(&hits);
+        self.enrich_search_results(&mut results).await;
+        Ok(results)
+    }
+
+    /// 构建语义搜索查询，返回原始搜索命中列表。
+    async fn build_semantic_query(&self, query_vector: &[f32], limit: usize) -> Vec<crate::models::memory::SearchHit> {
         let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
         let vs = match vs_guard.as_ref() {
             Some(vs) => vs,
             None => {
                 eprintln!("[xechat:search] vector_store is None");
-                return Ok(Vec::new());
+                return Vec::new();
             }
         };
         // 诊断：打印 vector_store 实例类型和指针
@@ -1330,11 +1467,11 @@ impl ConversationStore {
             hits.len(),
             hits.iter().map(|h| h.score).take(5).collect::<Vec<_>>()
         );
+        hits
+    }
 
-        if hits.is_empty() {
-            return Ok(Vec::new());
-        }
-
+    /// 对语义搜索命中进行过滤、去重和排序。
+    fn rank_semantic_results(hits: &[crate::models::memory::SearchHit]) -> Vec<crate::models::memory::SearchResult> {
         let results: Vec<_> = hits.iter()
             .filter_map(|hit| Self::hit_to_search_result(hit))
             .collect();
@@ -1346,12 +1483,7 @@ impl ConversationStore {
                 Try rebuilding vectors in Settings.", hits.iter().map(|h| h.score).fold(0.0f32, f32::max));
         }
 
-        let mut results = Self::dedup_and_sort_by_score(results);
-
-        // 批量补全 message_count 和 last_assistant_snippet
-        self.enrich_search_results(&mut results).await;
-
-        Ok(results)
+        Self::dedup_and_sort_by_score(results)
     }
 
     /// 批量补全搜索结果的 message_count 和 last_assistant_snippet。

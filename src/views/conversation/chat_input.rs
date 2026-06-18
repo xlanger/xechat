@@ -57,36 +57,147 @@ pub fn apply_model_selection(value: &str, config: &mut crate::XEChatConfig) -> O
     Some(())
 }
 
+/// 计算发送按钮的 CSS 类名。
+fn send_btn_class(
+    is_streaming: bool,
+    has_content: bool,
+    base: dioxus_style::CssClass,
+    active: dioxus_style::CssClass,
+    disabled: dioxus_style::CssClass,
+) -> dioxus_style::CssClass {
+    if is_streaming || has_content {
+        base + active
+    } else {
+        base + disabled
+    }
+}
+
+/// 计算模型触发器的 CSS 类名。
+fn model_trigger_class(
+    is_open: bool,
+    base: dioxus_style::CssClass,
+    open: dioxus_style::CssClass,
+) -> dioxus_style::CssClass {
+    if is_open {
+        base + open
+    } else {
+        base
+    }
+}
+
+/// 计算模型箭头的 CSS 类名。
+fn model_arrow_class(
+    is_open: bool,
+    base: dioxus_style::CssClass,
+    open: dioxus_style::CssClass,
+) -> dioxus_style::CssClass {
+    if is_open {
+        base + open
+    } else {
+        base
+    }
+}
+
+/// 处理输入框按键事件，若满足发送条件则调用回调。
+fn handle_input_keydown(
+    evt: KeyboardEvent,
+    has_content: bool,
+    mut on_send: impl FnMut(),
+) {
+    if is_send_key(&evt, has_content) {
+        evt.prevent_default();
+        on_send();
+    }
+}
+
+/// 渲染输入框底部工具栏（模型选择器 + 发送按钮）。
+fn render_input_actions(
+    toolbar_class: dioxus_style::CssClass,
+    model_selectors_class: dioxus_style::CssClass,
+    model_selector_wrapper_class: dioxus_style::CssClass,
+    trigger_class: dioxus_style::CssClass,
+    trigger_label_class: dioxus_style::CssClass,
+    arrow_class: dioxus_style::CssClass,
+    is_model_open: bool,
+    dropdown_class: dioxus_style::CssClass,
+    option_class: dioxus_style::CssClass,
+    option_selected_class: dioxus_style::CssClass,
+    add_class: dioxus_style::CssClass,
+    selected_label: &str,
+    options: &[(String, String)],
+    current_value: &str,
+    send_btn_class_val: dioxus_style::CssClass,
+    is_streaming: bool,
+    on_toggle_dropdown: impl FnMut(MouseEvent) + 'static,
+    on_select_model: Rc<RefCell<dyn FnMut(String)>>,
+    on_goto_settings: impl FnMut(MouseEvent) + 'static,
+    on_focusout: impl FnMut(FocusEvent) + 'static,
+    on_click_send: impl FnMut(MouseEvent) + 'static,
+) -> Element {
+    rsx! {
+        div {
+            class: "{toolbar_class}",
+            div {
+                class: "{model_selectors_class}",
+                div {
+                    class: "{model_selector_wrapper_class}",
+                    tabindex: "0",
+                    onfocusout: on_focusout,
+                    div {
+                        class: "{trigger_class}",
+                        onclick: on_toggle_dropdown,
+                        span { class: "{trigger_label_class}", "{selected_label}" }
+                        span {
+                            class: "{arrow_class}",
+                            Icon { data: tabler::ChevronDown, size: "14", stroke: "currentColor" }
+                        }
+                    }
+                    if is_model_open {
+                        div {
+                            class: "{dropdown_class}",
+                            for (k, label) in options {
+                                div {
+                                    class: if k == current_value {
+                                        format!("{} {}", option_class, option_selected_class)
+                                    } else {
+                                        format!("{}", option_class)
+                                    },
+                                    onclick: {
+                                        let key = k.clone();
+                                        let on_select = on_select_model.clone();
+                                        move |_| {
+                                            (on_select.borrow_mut())(key.clone());
+                                        }
+                                    },
+                                    "{label}"
+                                }
+                            }
+                            div {
+                                class: "{add_class}",
+                                onclick: on_goto_settings,
+                                Icon { data: tabler::Settings, size: "14", stroke: "currentColor" }
+                                span { "{t!(\"settings.add-model\")}" }
+                            }
+                        }
+                    }
+                }
+            }
+            div {
+                class: "{send_btn_class_val}",
+                onclick: on_click_send,
+                if is_streaming {
+                    Icon { data: tabler::PlayerStop, size: "16", stroke: "white" }
+                } else {
+                    Icon { data: tabler::Send, size: "16", stroke: "white" }
+                }
+            }
+        }
+    }
+}
+
 #[with_css(css, "styles/components/conversation.scss")]
 #[component]
 pub fn ChatInput() -> Element {
-    /// 计算发送按钮的 CSS 类名。
-    fn send_btn_class(is_streaming: bool, has_content: bool) -> dioxus_style::CssClass {
-        if is_streaming || has_content {
-            css::conv_send_btn + css::conv_send_btn_active
-        } else {
-            css::conv_send_btn + css::conv_send_btn_disabled
-        }
-    }
-
-    /// 计算模型触发器的 CSS 类名。
-    fn model_trigger_class(is_open: bool) -> dioxus_style::CssClass {
-        if is_open {
-            css::conv_model_trigger + css::conv_model_trigger_open
-        } else {
-            css::conv_model_trigger
-        }
-    }
-
-    /// 计算模型箭头的 CSS 类名。
-    fn model_arrow_class(is_open: bool) -> dioxus_style::CssClass {
-        if is_open {
-            css::conv_model_arrow + css::conv_model_arrow_open
-        } else {
-            css::conv_model_arrow
-        }
-    }
-
     let conv_store = use_conversation();
     let app_store = use_app();
     let _lang = *app_store.language.read();
@@ -97,7 +208,7 @@ pub fn ChatInput() -> Element {
     let is_streaming = conv_store.streaming();
 
     let has_content = !input_value.read().trim().is_empty();
-    let send_btn_class = send_btn_class(is_streaming, has_content);
+    let s_btn_class = send_btn_class(is_streaming, has_content, css::conv_send_btn, css::conv_send_btn_active, css::conv_send_btn_disabled);
 
     // 构建所有可用模型的单一选择列表："provider_key/model_name" → "模型名" 或 "模型名（OpenAI Compatible）"
     let (model_selector_options, current_selector_value) = {
@@ -122,7 +233,7 @@ pub fn ChatInput() -> Element {
         model_open.set(!is);
     };
 
-    let mut select_model_item = {
+    let select_model_item: Rc<RefCell<dyn FnMut(String)>> = Rc::new(RefCell::new({
         let mut app_store = app_store.clone();
         let mut model_open = model_open;
         move |v: String| {
@@ -131,7 +242,7 @@ pub fn ChatInput() -> Element {
             }
             model_open.set(false);
         }
-    };
+    }));
 
     let goto_settings = {
         let mut app_store = app_store.clone();
@@ -143,8 +254,8 @@ pub fn ChatInput() -> Element {
 
     let is_model_open = *model_open.read();
 
-    let m_trigger_class = model_trigger_class(is_model_open);
-    let m_arrow_class = model_arrow_class(is_model_open);
+    let m_trigger_class = model_trigger_class(is_model_open, css::conv_model_trigger, css::conv_model_trigger_open);
+    let m_arrow_class = model_arrow_class(is_model_open, css::conv_model_arrow, css::conv_model_arrow_open);
 
     // 发送消息的公共逻辑，用 Rc<RefCell> 共享于多个闭包
     let send_message: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new({
@@ -176,10 +287,7 @@ pub fn ChatInput() -> Element {
     let on_keydown_send = {
         let send_message = send_message.clone();
         move |evt: KeyboardEvent| {
-            if is_send_key(&evt, !input_value.read().trim().is_empty()) {
-                evt.prevent_default();
-                (send_message.borrow_mut())();
-            }
+            handle_input_keydown(evt, !input_value.read().trim().is_empty(), &mut *send_message.borrow_mut());
         }
     };
 
@@ -219,61 +327,29 @@ pub fn ChatInput() -> Element {
                     },
                     onkeydown: on_keydown_send,
                 }
-                div {
-                    class: "{css::conv_input_toolbar}",
-                    div {
-                        class: "{css::conv_input_model_selectors}",
-                        // 内联模型选择器
-                        div {
-                            class: "{css::conv_model_selector_wrapper}",
-                            tabindex: "0",
-                            onfocusout: move |_| model_open.set(false),
-                            div {
-                                class: "{m_trigger_class}",
-                                onclick: toggle_model_dropdown,
-                                span { class: "{css::conv_model_trigger_label}", "{selected_model_label}" }
-                                span {
-                                    class: "{m_arrow_class}",
-                                    Icon { data: tabler::ChevronDown, size: "14", stroke: "currentColor" }
-                                }
-                            }
-                            if is_model_open {
-                                div {
-                                    class: "{css::conv_model_dropdown}",
-                                    for (k, label) in &model_selector_options {
-                                        div {
-                                            class: if k == &current_selector_value {
-                                                format!("{} {}", css::conv_model_option, css::conv_model_option_selected)
-                                            } else {
-                                                format!("{}", css::conv_model_option)
-                                            },
-                                            onclick: {
-                                                let key = k.clone();
-                                                move |_| select_model_item(key.clone())
-                                            },
-                                            "{label}"
-                                        }
-                                    }
-                                    div {
-                                        class: "{css::conv_model_add}",
-                                        onclick: goto_settings,
-                                        Icon { data: tabler::Settings, size: "14", stroke: "currentColor" }
-                                        span { "{t!(\"settings.add-model\")}" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div {
-                        class: "{send_btn_class}",
-                        onclick: on_click_send,
-                        if is_streaming {
-                            Icon { data: tabler::PlayerStop, size: "16", stroke: "white" }
-                        } else {
-                            Icon { data: tabler::Send, size: "16", stroke: "white" }
-                        }
-                    }
-                }
+                {render_input_actions(
+                    css::conv_input_toolbar,
+                    css::conv_input_model_selectors,
+                    css::conv_model_selector_wrapper,
+                    m_trigger_class,
+                    css::conv_model_trigger_label,
+                    m_arrow_class,
+                    is_model_open,
+                    css::conv_model_dropdown,
+                    css::conv_model_option,
+                    css::conv_model_option_selected,
+                    css::conv_model_add,
+                    &selected_model_label,
+                    &model_selector_options,
+                    &current_selector_value,
+                    s_btn_class,
+                    is_streaming,
+                    toggle_model_dropdown,
+                    select_model_item,
+                    goto_settings,
+                    move |_| model_open.set(false),
+                    on_click_send,
+                )}
             }
         }
     }

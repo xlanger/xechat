@@ -4,6 +4,21 @@ use dioxus::desktop::tao::platform::macos::WindowBuilderExtMacOS;
 use dioxus::desktop::{Config, WindowBuilder};
 use super::SystemTheme;
 
+/// 从 macOS `defaults read -g AppleLanguages` 输出中解析语言代码。
+///
+/// 输出格式如 `(en, zh-Hans, ja)`，提取第一个语言标识符并映射到项目支持的语言。
+fn parse_locale_output(stdout: &str) -> Option<&'static str> {
+    let lang = stdout.split(',').next()?;
+    let lang = lang.trim().trim_start_matches('(').trim_matches('"');
+    if lang.starts_with("zh") {
+        Some("zh-CN")
+    } else if lang.starts_with("en") {
+        Some("en")
+    } else {
+        None
+    }
+}
+
 /// 检测 macOS 系统语言，返回 locale 标识符。
 /// 检测失败或不支持时返回 "zh-CN"。
 pub fn detect_system_language() -> &'static str {
@@ -11,14 +26,8 @@ pub fn detect_system_language() -> &'static str {
     if let Ok(output) = Command::new("defaults").args(["read", "-g", "AppleLanguages"]).output()
         && output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
-            // 输出格式如：(en, zh-Hans, ja)
-            if let Some(lang) = stdout.split(',').next() {
-                let lang = lang.trim().trim_start_matches('(').trim_matches('"');
-                if lang.starts_with("zh") {
-                    return "zh-CN";
-                } else if lang.starts_with("en") {
-                    return "en";
-                }
+            if let Some(lang) = parse_locale_output(&stdout) {
+                return lang;
             }
         }
     "zh-CN"

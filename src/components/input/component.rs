@@ -186,6 +186,18 @@ pub fn Input(
     }
 }
 
+/// 判断字符是否为合法数字输入字符。
+///
+/// 负号仅在首位合法，小数点仅当尚未出现时合法，数字始终合法。
+fn is_valid_number_char(c: char, index: usize, has_dot: bool) -> bool {
+    match c {
+        '-' if index == 0 => true,
+        '.' if !has_dot => true,
+        c if c.is_ascii_digit() => true,
+        _ => false,
+    }
+}
+
 /// 过滤输入字符串，只保留合法数字字符。
 ///
 /// 规则：
@@ -197,14 +209,11 @@ pub fn filter_number_input(input: &str) -> String {
     let mut has_dot = false;
 
     for (i, c) in input.chars().enumerate() {
-        match c {
-            '-' if i == 0 => result.push(c),
-            '.' if !has_dot => {
+        if is_valid_number_char(c, i, has_dot) {
+            if c == '.' {
                 has_dot = true;
-                result.push(c);
             }
-            c if c.is_ascii_digit() => result.push(c),
-            _ => {}
+            result.push(c);
         }
     }
 
@@ -229,30 +238,48 @@ pub fn normalize_number(value: &str) -> String {
     value.to_string()
 }
 
+/// 解析字符串为 f64，失败返回 None。
+fn parse_clamped_value(value: &str) -> Option<f64> {
+    if value.is_empty() {
+        return None;
+    }
+    value.parse::<f64>().ok()
+}
+
+/// 对数值应用边界截断，返回截断后的值和是否发生了截断。
+fn apply_clamp_bounds(num: f64, min: Option<f64>, max: Option<f64>) -> (f64, bool) {
+    let mut clamped = num;
+    if let Some(min_val) = min
+        && clamped < min_val {
+            clamped = min_val;
+        }
+    if let Some(max_val) = max
+        && clamped > max_val {
+            clamped = max_val;
+        }
+    (clamped, clamped != num)
+}
+
+/// 格式化截断后的数值，整数时省略小数点。
+fn format_clamped_value(clamped: f64, original: f64) -> String {
+    if original.fract() == 0.0 && clamped.fract() == 0.0 {
+        format!("{:.0}", clamped)
+    } else {
+        clamped.to_string()
+    }
+}
+
 /// 对数字输入值进行边界截断。
 pub fn clamp_number_value(value: &str, min: Option<f64>, max: Option<f64>) -> String {
-    if value.is_empty() {
+    let Some(num) = parse_clamped_value(value) else {
         return value.to_string();
-    }
+    };
 
-    if let Ok(num) = value.parse::<f64>() {
-        let mut clamped = num;
-        if let Some(min_val) = min
-            && clamped < min_val {
-                clamped = min_val;
-            }
-        if let Some(max_val) = max
-            && clamped > max_val {
-                clamped = max_val;
-            }
-        if clamped != num {
-            if num.fract() == 0.0 && clamped.fract() == 0.0 {
-                return format!("{:.0}", clamped);
-            }
-            return clamped.to_string();
-        }
+    let (clamped, was_clamped) = apply_clamp_bounds(num, min, max);
+    if was_clamped {
+        format_clamped_value(clamped, num)
+    } else {
+        value.to_string()
     }
-
-    value.to_string()
 }
 

@@ -572,7 +572,24 @@ impl ConversationStore {
         Self::init_memory_pipeline(&vector_store);
 
         // 初始化 ConversationStore
-        match Self::open_conversation_store(&conv_lancedb_str, vector_store).await {
+        self.init_conversation_store(&conv_lancedb_str, vector_store).await;
+
+        // 启动时如有待重嵌入数据，异步执行
+        if let Some(turns) = raw_turns {
+            eprintln!("[xechat] init_backend: {} raw turns to re-embed", turns.len());
+            self.spawn_reembed_task(turns, false);
+        }
+    }
+
+    /// 初始化 ConversationStore 并加载对话列表。
+    ///
+    /// 成功时初始化全局 store 并加载对话，失败时输出错误日志。
+    async fn init_conversation_store(
+        &mut self,
+        lancedb_path: &str,
+        vector_store: Option<std::sync::Arc<dyn crate::services::vector_store::VectorStore>>,
+    ) {
+        match Self::open_conversation_store(lancedb_path, vector_store).await {
             Ok(store) => {
                 if let Err(e) = crate::services::conversation_store::init_store(store) {
                     eprintln!("[xechat] Failed to init conversation store: {}", e);
@@ -582,12 +599,6 @@ impl ConversationStore {
             Err(e) => {
                 eprintln!("[xechat] Failed to open LanceDB for conversations: {}", e);
             }
-        }
-
-        // 启动时如有待重嵌入数据，异步执行
-        if let Some(turns) = raw_turns {
-            eprintln!("[xechat] init_backend: {} raw turns to re-embed", turns.len());
-            self.spawn_reembed_task(turns, false);
         }
     }
 
@@ -693,50 +704,90 @@ impl ConversationStore {
         force_rebuild: bool,
         tx: tokio::sync::mpsc::Sender<ReembedEvent>,
     ) {
-        let embedder = match crate::services::embedder::get_embedder() {
-            Some(e) => e,
-            None => {
-                eprintln!("[xechat] Re-embed failed: no embedder available");
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
+        let (embedder, vs, raw_turns) = match Self::prepare_reembed_params(&lancedb_path, &tx).await {
+            Some(params) => params,
+            None => return,
         };
 
-        let vs = match Self::open_store_for_reembed(&lancedb_path).await {
-            Ok(vs) => {
-                eprintln!("[xechat] spawn_reembed: LanceDbStore opened, dim={}", vs.vector_dim());
-                vs
-            }
-            Err(e) => {
-                eprintln!("[xechat] Re-embed failed: {}", e);
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
-        };
-
-        let raw_turns = match Self::load_turns_for_reembed().await {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                eprintln!("[xechat] No turns to re-embed");
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
-            Err(e) => {
-                eprintln!("[xechat] Re-embed failed: {}", e);
-                let _ = tx.send(ReembedEvent::Done).await;
-                return;
-            }
-        };
-
-        let tx_progress = tx.clone();
-        let result = vs
-            .reembed_turns(raw_turns, &embedder, &|current, total| {
-                let _ = tx_progress.try_send(ReembedEvent::Progress(current, total));
-            }, force_rebuild)
-            .await;
+        let result = Self::execute_reembed_batch(&vs, raw_turns, &embedder, &tx, force_rebuild).await;
 
         let _ = tx.send(ReembedEvent::Done).await;
         Self::handle_reembed_result(result, vs);
+    }
+
+    /// 准备重嵌入参数：获取 embedder、打开 store、加载 turns。
+    ///
+    /// 任一步骤失败时发送 `ReembedEvent::Done` 并返回 `None`。
+    /// 获取嵌入器，失败时发送 Done 事件。
+    async fn get_embedder_or_fail(tx: &tokio::sync::mpsc::Sender<ReembedEvent>) -> Option<std::sync::Arc<dyn crate::services::embedder::Embedder>> {
+        match crate::services::embedder::get_embedder() {
+            Some(e) => Some(e),
+            None => {
+                eprintln!("[xechat] Re-embed failed: no embedder available");
+                let _ = tx.send(ReembedEvent::Done).await;
+                None
+            }
+        }
+    }
+
+    /// 打开向量存储，失败时发送 Done 事件。
+    async fn open_store_or_fail(lancedb_path: &str, tx: &tokio::sync::mpsc::Sender<ReembedEvent>) -> Option<crate::services::vector_store::lancedb_store::LanceDbStore> {
+        match Self::open_store_for_reembed(lancedb_path).await {
+            Ok(vs) => {
+                eprintln!("[xechat] spawn_reembed: LanceDbStore opened, dim={}", vs.vector_dim());
+                Some(vs)
+            }
+            Err(e) => {
+                eprintln!("[xechat] Re-embed failed: {}", e);
+                let _ = tx.send(ReembedEvent::Done).await;
+                None
+            }
+        }
+    }
+
+    /// 加载轮次数据，失败或为空时发送 Done 事件。
+    async fn load_turns_or_fail(tx: &tokio::sync::mpsc::Sender<ReembedEvent>) -> Option<Vec<crate::services::vector_store::lancedb_store::RawTurn>> {
+        match Self::load_turns_for_reembed().await {
+            Ok(t) if !t.is_empty() => Some(t),
+            Ok(_) => {
+                eprintln!("[xechat] No turns to re-embed");
+                let _ = tx.send(ReembedEvent::Done).await;
+                None
+            }
+            Err(e) => {
+                eprintln!("[xechat] Re-embed failed: {}", e);
+                let _ = tx.send(ReembedEvent::Done).await;
+                None
+            }
+        }
+    }
+
+    async fn prepare_reembed_params(
+        lancedb_path: &str,
+        tx: &tokio::sync::mpsc::Sender<ReembedEvent>,
+    ) -> Option<(
+        std::sync::Arc<dyn crate::services::embedder::Embedder>,
+        crate::services::vector_store::lancedb_store::LanceDbStore,
+        Vec<crate::services::vector_store::lancedb_store::RawTurn>,
+    )> {
+        let embedder = Self::get_embedder_or_fail(tx).await?;
+        let vs = Self::open_store_or_fail(lancedb_path, tx).await?;
+        let raw_turns = Self::load_turns_or_fail(tx).await?;
+        Some((embedder, vs, raw_turns))
+    }
+
+    /// 执行批量重嵌入，通过 channel 报告进度。
+    async fn execute_reembed_batch(
+        vs: &crate::services::vector_store::lancedb_store::LanceDbStore,
+        raw_turns: Vec<crate::services::vector_store::lancedb_store::RawTurn>,
+        embedder: &std::sync::Arc<dyn crate::services::embedder::Embedder>,
+        tx: &tokio::sync::mpsc::Sender<ReembedEvent>,
+        force_rebuild: bool,
+    ) -> anyhow::Result<(usize, usize)> {
+        let tx_progress = tx.clone();
+        vs.reembed_turns(raw_turns, embedder, &|current, total| {
+            let _ = tx_progress.try_send(ReembedEvent::Progress(current, total));
+        }, force_rebuild).await
     }
 
     /// 启动异步重嵌入任务。
@@ -817,20 +868,13 @@ impl ConversationStore {
                 "[xechat] Embedder changed, rebuilding turns table: name={} dim={}",
                 current_meta.name, current_meta.dimension
             );
-            // 先读取原始数据，再删表
-            let raw_turns = vs.read_all_turns_raw().await.unwrap_or_default();
-            eprintln!("[xechat] Read {} raw turns for re-embedding", raw_turns.len());
-            vs.drop_and_recreate_turns_table().await;
-            vs.set_vector_dim(current_meta.dimension);
-            vs.write_embedder_meta(&current_meta);
-            // 重建后需要重新初始化 turns_table，否则搜索时 turns_table 为 None
-            let _ = vs.ensure_table().await;
+            let raw_turns = Self::rebuild_turns_table(vs, current_meta.dimension, Some(current_meta)).await;
             return Some(raw_turns);
         }
 
         // 检查维度是否匹配（兼容旧版本无元数据文件的情况）
-        let embedder_dim = match crate::services::embedder::get_embedder() {
-            Some(e) => e.dimension() as i32,
+        let embedder_dim = match Self::detect_embedder_dim() {
+            Some(d) => d,
             None => return None,
         };
 
@@ -839,30 +883,49 @@ impl ConversationStore {
                 "[xechat] Dimension mismatch: turns table={} embedder={}, rebuilding turns table",
                 vs.vector_dim(), embedder_dim
             );
-
-            // 先读取原始数据，再删表
-            let raw_turns = vs.read_all_turns_raw().await.unwrap_or_default();
-            eprintln!("[xechat] Read {} raw turns for re-embedding", raw_turns.len());
-            vs.drop_and_recreate_turns_table().await;
-            vs.set_vector_dim(embedder_dim);
-
-            // 更新元数据
-            if let Some(e) = crate::services::embedder::get_embedder() {
-                let meta = crate::services::vector_store::lancedb_store::EmbedderMeta {
+            let meta = crate::services::embedder::get_embedder().map(|e| {
+                crate::services::vector_store::lancedb_store::EmbedderMeta {
                     name: e.name().to_string(),
                     dimension: e.dimension() as i32,
-                };
-                vs.write_embedder_meta(&meta);
-            }
-
-            // 重建后需要重新初始化 turns_table，否则搜索时 turns_table 为 None
-            let _ = vs.ensure_table().await;
-
+                }
+            });
+            let raw_turns = Self::rebuild_turns_table(vs, embedder_dim, meta).await;
             return Some(raw_turns);
         }
 
         // 维度匹配，但 turns 表可能为空（旧版本删表后未重建）
         Self::check_empty_turns_table(vs).await
+    }
+
+    /// 检测当前 embedder 的向量维度。
+    ///
+    /// 返回 `Some(dim)` 表示 embedder 可用，`None` 表示无 embedder。
+    fn detect_embedder_dim() -> Option<i32> {
+        crate::services::embedder::get_embedder().map(|e| e.dimension() as i32)
+    }
+
+    /// 重建 turns 表：读取原始数据 → 删表 → 设置维度 → 写入元数据 → 重建表。
+    ///
+    /// 返回读取到的原始轮次数据。
+    async fn rebuild_turns_table(
+        vs: &mut crate::services::vector_store::lancedb_store::LanceDbStore,
+        new_dim: i32,
+        meta: Option<crate::services::vector_store::lancedb_store::EmbedderMeta>,
+    ) -> Vec<crate::services::vector_store::lancedb_store::RawTurn> {
+        // 先读取原始数据，再删表
+        let raw_turns = vs.read_all_turns_raw().await.unwrap_or_default();
+        eprintln!("[xechat] Read {} raw turns for re-embedding", raw_turns.len());
+        vs.drop_and_recreate_turns_table().await;
+        vs.set_vector_dim(new_dim);
+
+        // 写入元数据（如有）
+        if let Some(m) = meta {
+            vs.write_embedder_meta(&m);
+        }
+
+        // 重建后需要重新初始化 turns_table，否则搜索时 turns_table 为 None
+        let _ = vs.ensure_table().await;
+        raw_turns
     }
 
     /// 检查 turns 表是否为空，空表需要从对话消息重建轮次向量。
@@ -895,25 +958,11 @@ impl ConversationStore {
         self.rebuild_progress.set((0, 1));
 
         // 从对话消息中提取所有轮次（数据源，始终使用）
-        let raw_turns = {
-            let store = match crate::services::conversation_store::get_store() {
-                Some(s) => s,
-                None => {
-                    eprintln!("[xechat] rebuild_vectors: no conversation store");
-                    self.rebuild_in_progress.set(false);
-                    return;
-                }
-            };
-            match store.load_all_turns_from_conversations().await {
-                Ok(turns) => {
-                    eprintln!("[xechat] rebuild_vectors: extracted {} turns from conversations", turns.len());
-                    turns
-                }
-                Err(e) => {
-                    eprintln!("[xechat] rebuild_vectors: failed to load conversations: {}", e);
-                    self.rebuild_in_progress.set(false);
-                    return;
-                }
+        let raw_turns = match self.load_turns_for_rebuild().await {
+            Some(turns) => turns,
+            None => {
+                self.rebuild_in_progress.set(false);
+                return;
             }
         };
 
@@ -925,6 +974,29 @@ impl ConversationStore {
 
         // 复用 spawn_reembed_task 执行实际的强制重建
         self.spawn_reembed_task(raw_turns, true);
+    }
+
+    /// 从对话存储加载轮次数据，用于重建向量。
+    ///
+    /// 返回 `Some(turns)` 表示加载成功，`None` 表示存储不可用或加载失败。
+    async fn load_turns_for_rebuild(&self) -> Option<Vec<crate::services::vector_store::lancedb_store::RawTurn>> {
+        let store = match crate::services::conversation_store::get_store() {
+            Some(s) => s,
+            None => {
+                eprintln!("[xechat] rebuild_vectors: no conversation store");
+                return None;
+            }
+        };
+        match store.load_all_turns_from_conversations().await {
+            Ok(turns) => {
+                eprintln!("[xechat] rebuild_vectors: extracted {} turns from conversations", turns.len());
+                Some(turns)
+            }
+            Err(e) => {
+                eprintln!("[xechat] rebuild_vectors: failed to load conversations: {}", e);
+                None
+            }
+        }
     }
 
     /// 初始化记忆管线（需要 embedder + vector_store 同时就绪）。
@@ -961,14 +1033,7 @@ impl ConversationStore {
     async fn init_embedder(&mut self, config: &crate::models::config::XEChatConfig) -> bool {
         // 优先级 1：用户明确选择 ollama 作为嵌入提供商
         if should_enable_ollama(config) {
-            if self.try_init_ollama_primary(config).await {
-                return true;
-            }
-            // Ollama 不可用时不 fallback 到内置模型，避免 embedder 名称不匹配
-            // 导致向量重建。用户需先启动 Ollama 再使用。
-            eprintln!("[xechat] Ollama embedder unavailable, not falling back to built-in model to prevent vector rebuild");
-            self.embedder_ready.set(false);
-            return false;
+            return self.try_init_ollama_or_fail(config).await;
         }
 
         // [加固] 用户选择了 ollama 但尚未配置具体模型 → 不 fallback 到内置模型
@@ -983,20 +1048,32 @@ impl ConversationStore {
         }
 
         // 优先级 2：内置 Qwen3-Embedding-0.6B（仅在非 ollama 模式下）
+        self.init_builtin_embedder().await
+    }
+
+    /// 尝试将 Ollama 作为主嵌入器初始化，失败时不 fallback 到内置模型。
+    ///
+    /// Ollama 不可用时不 fallback，避免 embedder 名称不匹配导致向量重建。
+    /// 用户需先启动 Ollama 再使用。
+    async fn try_init_ollama_or_fail(&mut self, config: &crate::models::config::XEChatConfig) -> bool {
+        if self.try_init_ollama_primary(config).await {
+            return true;
+        }
+        eprintln!("[xechat] Ollama embedder unavailable, not falling back to built-in model to prevent vector rebuild");
+        self.embedder_ready.set(false);
+        false
+    }
+
+    /// 初始化内置 Qwen3-Embedding-0.6B 嵌入器。
+    ///
+    /// 通过 `spawn_blocking` 在后台线程加载模型，避免阻塞异步运行时。
+    async fn init_builtin_embedder(&mut self) -> bool {
         match tokio::task::spawn_blocking(crate::services::embedder::qwen3::Qwen3Embedder::new).await {
             Ok(Ok(qwen3)) => {
                 eprintln!("[xechat] Qwen3-Embedding-0.6B ready (dim={})", qwen3.dimension());
                 let embedder: std::sync::Arc<dyn crate::services::embedder::Embedder> =
                     std::sync::Arc::new(qwen3);
-
-                if let Err(e) = crate::services::embedder::init_embedder(embedder) {
-                    eprintln!("[xechat] Embedder init error: {}", e);
-                    self.embedder_ready.set(false);
-                    return false;
-                }
-
-                self.embedder_ready.set(true);
-                true
+                self.register_embedder_or_fail(embedder)
             }
             Ok(Err(e)) => {
                 eprintln!("[xechat] Failed to init Qwen3 embedder: {}", e);
@@ -1009,6 +1086,19 @@ impl ConversationStore {
                 false
             }
         }
+    }
+
+    /// 注册嵌入器到全局单例，失败时设置 `embedder_ready` 为 false。
+    ///
+    /// 返回 `true` 表示注册成功，`false` 表示失败。
+    fn register_embedder_or_fail(&mut self, embedder: std::sync::Arc<dyn crate::services::embedder::Embedder>) -> bool {
+        if let Err(e) = crate::services::embedder::init_embedder(embedder) {
+            eprintln!("[xechat] Embedder init error: {}", e);
+            self.embedder_ready.set(false);
+            return false;
+        }
+        self.embedder_ready.set(true);
+        true
     }
 
     /// 尝试将 Ollama 作为主嵌入器初始化。
@@ -1356,23 +1446,36 @@ impl ConversationStore {
     ) -> StreamLoopAction {
         match event {
             Some(stream_event) => {
-                match self.handle_stream_event(stream_event, full_content, full_reasoning) {
-                    StreamAction::Continue => StreamLoopAction::Continue,
-                    StreamAction::Complete => {
-                        self.handle_stream_complete(conv_id, full_content, full_reasoning, is_first_message).await;
-                        StreamLoopAction::Break
-                    }
-                    StreamAction::Error(app_err) => {
-                        let err_display = self.handle_stream_error(conv_id, full_content, app_err).await;
-                        StreamLoopAction::BreakWithError(err_display)
-                    }
-                }
+                let action = self.handle_stream_event(stream_event, full_content, full_reasoning);
+                self.process_stream_action(action, conv_id, full_content, full_reasoning, is_first_message).await
             }
             None => {
                 if cancel_token.is_cancelled() {
                     self.handle_stream_cancel(conv_id, full_content).await;
                 }
                 StreamLoopAction::Break
+            }
+        }
+    }
+
+    /// 将 StreamAction 转换为 StreamLoopAction，执行对应的完成/错误处理。
+    async fn process_stream_action(
+        &mut self,
+        action: StreamAction,
+        conv_id: &str,
+        full_content: &mut String,
+        full_reasoning: &mut String,
+        is_first_message: bool,
+    ) -> StreamLoopAction {
+        match action {
+            StreamAction::Continue => StreamLoopAction::Continue,
+            StreamAction::Complete => {
+                self.handle_stream_complete(conv_id, full_content, full_reasoning, is_first_message).await;
+                StreamLoopAction::Break
+            }
+            StreamAction::Error(app_err) => {
+                let err_display = self.handle_stream_error(conv_id, full_content, app_err).await;
+                StreamLoopAction::BreakWithError(err_display)
             }
         }
     }
@@ -1439,10 +1542,29 @@ impl ConversationStore {
         config: XEChatConfig,
         mut toast_sender: impl FnMut(ToastKind, String) + 'static,
     ) {
-        let conv_id = match self.validate_send_prereqs(&content) {
-            Some(id) => id,
-            None => return,
-        };
+        let (conv_id, is_first_message, cancel_for_recv, provider, all_messages) =
+            match self.prepare_message_payload(&content, &config).await {
+                Some(payload) => payload,
+                None => return,
+            };
+
+        let mut rx = self.launch_stream_task(provider, &config, all_messages);
+
+        self.run_streaming_loop(&mut rx, &cancel_for_recv, &conv_id, is_first_message, toast_sender).await;
+
+        self.cleanup_streaming_state();
+    }
+
+    /// 准备发送消息所需的全部参数：校验、持久化、构建消息列表。
+    ///
+    /// 返回 `Some((conv_id, is_first_message, cancel_for_recv, provider, all_messages))` 表示准备成功，
+    /// `None` 表示应中止发送（校验失败、持久化失败或配置缺失）。
+    async fn prepare_message_payload(
+        &mut self,
+        content: &str,
+        config: &XEChatConfig,
+    ) -> Option<(String, bool, CancellationToken, crate::models::config::ModelProvider, Vec<ChatMessage>)> {
+        let conv_id = self.validate_send_prereqs(content)?;
 
         self.is_streaming.set(true);
         self.streaming_content.set(String::new());
@@ -1459,47 +1581,36 @@ impl ConversationStore {
                 .unwrap_or(false)
         };
 
-        let user_msg = Message::new_user(content.clone());
+        let user_msg = Message::new_user(content.to_string());
         self.push_message_to_conversation(&conv_id, user_msg.clone());
 
         // 缓存用户消息，等待助手回复配对后写入轮次向量
         if let Some(pipeline) = crate::services::memory::get_pipeline() {
-            pipeline.on_user_message(&conv_id, &user_msg.id, &content);
+            pipeline.on_user_message(&conv_id, &user_msg.id, content);
         }
 
         if !self.persist_user_message(&conv_id, &user_msg, is_first_message).await {
             self.is_streaming.set(false);
-            return;
+            return None;
         }
 
-        let provider = match self.resolve_provider(&config) {
-            Some(p) => p,
-            None => return,
-        };
+        let provider = self.resolve_provider(config)?;
+        let all_messages = self.build_chat_messages(content, config, is_first_message).await;
 
-        let all_messages = self.build_chat_messages(&content, &config, is_first_message).await;
+        Some((conv_id, is_first_message, cancel_for_recv, provider, all_messages))
+    }
 
-        let model_config = provider.models.get(&config.model).cloned();
-        let temperature = model_config.as_ref().map(|m| m.temperature);
-        let top_p = model_config.as_ref().map(|m| m.top_p);
-        let client = self.client.clone();
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-
-        let provider_key_for_route = config.model_provider.clone();
-        let provider_key = config.model_provider.clone();
-        let params = SendMessageParams {
-            provider,
-            provider_key,
-            model: config.model.clone(),
-            messages: all_messages,
-            temperature,
-            top_p,
-            model_config,
-        };
-        let conv_id_clone = conv_id.clone();
-        let stream_handle = tokio::spawn(async move { send_message(&client, params, &provider_key_for_route, tx).await });
-        self.stream_task.set(Some(stream_handle));
-
+    /// 运行流式接收循环：监听取消信号和流式事件，直到完成/错误/取消。
+    ///
+    /// 通过 `handle_received_event` 处理每个事件，通过 `drain_remaining_chunks` 排空取消时的剩余数据。
+    async fn run_streaming_loop(
+        &mut self,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
+        cancel_for_recv: &CancellationToken,
+        conv_id: &str,
+        is_first_message: bool,
+        mut toast_sender: impl FnMut(ToastKind, String),
+    ) {
         let mut full_content = String::new();
         let mut full_reasoning = String::new();
         loop {
@@ -1507,50 +1618,23 @@ impl ConversationStore {
                 // 取消信号：用户点击停止按钮时立即响应
                 _ = cancel_for_recv.cancelled() => {
                     // drain channel 中剩余的 chunk
-                    while let Ok(event) = rx.try_recv() {
-                        if let StreamEvent::Chunk(chunk) = event {
-                            full_content.push_str(&chunk);
-                        }
-                    }
-                    self.handle_stream_cancel(&conv_id_clone, &full_content).await;
+                    Self::drain_remaining_chunks(rx, &mut full_content);
+                    self.handle_stream_cancel(conv_id, &full_content).await;
                     break;
                 }
                 // 流式事件
                 event = rx.recv() => {
-                    match event {
-                        Some(stream_event) => {
-                            match self.handle_stream_event(stream_event, &mut full_content, &mut full_reasoning) {
-                                StreamAction::Continue => {}
-                                StreamAction::Complete => {
-                                    self.handle_stream_complete(&conv_id_clone, &full_content, &full_reasoning, is_first_message).await;
-                                    break;
-                                }
-                                StreamAction::Error(app_err) => {
-                                    let err_display = self.handle_stream_error(&conv_id_clone, &full_content, app_err).await;
-                                    toast_sender(ToastKind::Error, err_display);
-                                    break;
-                                }
-                            }
-                        }
-                        None => {
-                            // channel 关闭，流式任务结束
-                            // 如果是用户取消导致的关闭，保存已生成内容为截断消息
-                            if cancel_for_recv.is_cancelled() {
-                                self.handle_stream_cancel(&conv_id_clone, &full_content).await;
-                            }
+                    match self.handle_received_event(event, cancel_for_recv, conv_id, &mut full_content, &mut full_reasoning, is_first_message).await {
+                        StreamLoopAction::Continue => {}
+                        StreamLoopAction::Break => break,
+                        StreamLoopAction::BreakWithError(err_display) => {
+                            toast_sender(ToastKind::Error, err_display);
                             break;
                         }
                     }
                 }
             }
         }
-
-        // 统一清理流式状态
-        self.streaming_content.set(String::new());
-        self.streaming_reasoning.set(String::new());
-        self.is_streaming.set(false);
-        self.cancel_token.set(None);
-        self.stream_task.set(None);
     }
 }
 

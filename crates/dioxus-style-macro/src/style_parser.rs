@@ -397,6 +397,84 @@ fn scope_element_component(
     }
 }
 
+/// Handles combinator characters (space, `>`, `+`, `~`) for selector scoping.
+///
+/// Returns `Some(at_start)` if `ch` is a combinator (handled by `scope_combinator`),
+/// `None` otherwise.
+#[inline]
+fn handle_scope_combinator_char(
+    ch: char,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    result: &mut String,
+) -> Option<bool> {
+    match ch {
+        ' ' | '>' | '+' | '~' => Some(scope_combinator(ch, chars, result)),
+        _ => None,
+    }
+}
+
+/// Handles prefix-based selector characters (`.`, `#`, `:`) for selector scoping.
+///
+/// Returns `Some(false)` if `ch` was handled, `None` otherwise.
+#[inline]
+fn handle_scope_prefix_char(
+    ch: char,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    result: &mut String,
+    scope: &str,
+) -> Option<bool> {
+    if ch == '.' {
+        scope_class_component(chars, result, scope);
+        return Some(false);
+    }
+    if ch == '#' {
+        scope_id_component(chars, result);
+        return Some(false);
+    }
+    if ch == ':' {
+        scope_pseudo_component(chars, result, scope);
+        return Some(false);
+    }
+    None
+}
+
+/// Handles attribute selector start character (`[`) for selector scoping.
+///
+/// Returns `Some(false)` if `ch` is `[`, `None` otherwise.
+#[inline]
+fn handle_scope_bracket_char(
+    ch: char,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    result: &mut String,
+) -> Option<bool> {
+    if ch != '[' {
+        return None;
+    }
+    scope_attribute_component(chars, result);
+    Some(false)
+}
+
+/// Handles universal (`*`), element selectors, and default character output.
+#[inline]
+fn handle_scope_element_or_default(
+    ch: char,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    result: &mut String,
+    scope: &str,
+    at_start: bool,
+) -> bool {
+    if ch == '*' {
+        result.push(ch);
+        return false;
+    }
+    if ch.is_alphabetic() && at_start {
+        scope_element_component(ch, chars, result, scope);
+        return false;
+    }
+    result.push(ch);
+    false
+}
+
 #[inline]
 fn dispatch_selector_char(
     ch: char,
@@ -405,37 +483,16 @@ fn dispatch_selector_char(
     scope: &str,
     at_start: bool,
 ) -> bool {
-    match ch {
-        '.' => {
-            scope_class_component(chars, result, scope);
-            false
-        }
-        '#' => {
-            scope_id_component(chars, result);
-            false
-        }
-        ' ' | '>' | '+' | '~' => scope_combinator(ch, chars, result),
-        ':' => {
-            scope_pseudo_component(chars, result, scope);
-            false
-        }
-        '[' => {
-            scope_attribute_component(chars, result);
-            false
-        }
-        '*' => {
-            result.push(ch);
-            false
-        }
-        ch if ch.is_alphabetic() && at_start => {
-            scope_element_component(ch, chars, result, scope);
-            false
-        }
-        _ => {
-            result.push(ch);
-            false
-        }
+    if let Some(r) = handle_scope_combinator_char(ch, chars, result) {
+        return r;
     }
+    if let Some(r) = handle_scope_prefix_char(ch, chars, result, scope) {
+        return r;
+    }
+    if let Some(r) = handle_scope_bracket_char(ch, chars, result) {
+        return r;
+    }
+    handle_scope_element_or_default(ch, chars, result, scope, at_start)
 }
 
 #[inline]
@@ -865,5 +922,133 @@ mod tests {
         let mut result = String::new();
         scope_attribute_component(&mut chars, &mut result);
         assert_eq!(result, "[attr='value']");
+    }
+
+    // ---- Tests for new dispatch helper functions ----
+
+    #[test]
+    fn test_handle_scope_combinator_char_space() {
+        let mut chars = " ".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_combinator_char(' ', &mut chars, &mut result),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_handle_scope_combinator_char_gt() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_combinator_char('>', &mut chars, &mut result),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn test_handle_scope_combinator_char_non_combinator() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_combinator_char('.', &mut chars, &mut result),
+            None
+        );
+    }
+
+    #[test]
+    fn test_handle_scope_prefix_char_class() {
+        let mut chars = "btn".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_prefix_char('.', &mut chars, &mut result, "abc"),
+            Some(false)
+        );
+        assert_eq!(result, ".abc_btn");
+    }
+
+    #[test]
+    fn test_handle_scope_prefix_char_id() {
+        let mut chars = "main".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_prefix_char('#', &mut chars, &mut result, "abc"),
+            Some(false)
+        );
+        assert_eq!(result, "#main");
+    }
+
+    #[test]
+    fn test_handle_scope_prefix_char_pseudo() {
+        let mut chars = "hover".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_prefix_char(':', &mut chars, &mut result, "abc"),
+            Some(false)
+        );
+        assert_eq!(result, ":hover");
+    }
+
+    #[test]
+    fn test_handle_scope_prefix_char_unhandled() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_prefix_char('a', &mut chars, &mut result, "abc"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_handle_scope_bracket_char_open() {
+        let mut chars = "attr]".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_bracket_char('[', &mut chars, &mut result),
+            Some(false)
+        );
+        assert_eq!(result, "[attr]");
+    }
+
+    #[test]
+    fn test_handle_scope_bracket_char_not_bracket() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert_eq!(
+            handle_scope_bracket_char('a', &mut chars, &mut result),
+            None
+        );
+    }
+
+    #[test]
+    fn test_handle_scope_element_or_default_universal() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert!(!handle_scope_element_or_default('*', &mut chars, &mut result, "abc", true));
+        assert_eq!(result, "*");
+    }
+
+    #[test]
+    fn test_handle_scope_element_or_default_element_at_start() {
+        let mut chars = "iv".chars().peekable();
+        let mut result = String::new();
+        assert!(!handle_scope_element_or_default('d', &mut chars, &mut result, "abc", true));
+        assert_eq!(result, "div[data-scope=\"abc\"]");
+    }
+
+    #[test]
+    fn test_handle_scope_element_or_default_element_not_at_start() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert!(!handle_scope_element_or_default('d', &mut chars, &mut result, "abc", false));
+        assert_eq!(result, "d");
+    }
+
+    #[test]
+    fn test_handle_scope_element_or_default_default_char() {
+        let mut chars = "".chars().peekable();
+        let mut result = String::new();
+        assert!(!handle_scope_element_or_default('5', &mut chars, &mut result, "abc", true));
+        assert_eq!(result, "5");
     }
 }
