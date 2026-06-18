@@ -139,7 +139,15 @@ a:hover {
 
 p {
     margin: 8px 0;
-    line-height: 1.8;
+    line-height: 1.6;
+}
+
+// 首段无上边距，末段无下边距
+:first-child > p {
+    margin-top: 0;
+}
+:last-child > p {
+    margin-bottom: 0;
 }
 
 ul,

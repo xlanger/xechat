@@ -43,7 +43,7 @@ pub fn Markdown(props: MarkdownProps) -> Element {
 
     rsx! {
         div {
-            style: "white-space: normal; line-height: 1.2; color: var(--text);",
+            style: "white-space: normal; line-height: 1.6; color: var(--text);",
             dangerous_inner_html: "{html}"
         }
     }

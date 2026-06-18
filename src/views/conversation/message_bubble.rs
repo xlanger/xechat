@@ -70,9 +70,9 @@ fn render_message_actions(
 /// 渲染头像图标。
 fn render_avatar_icon(is_user: bool) -> Element {
     if is_user {
-        rsx! { Icon { data: tabler::User, size: "24" } }
+        rsx! { Icon { data: tabler::User, size: "20" } }
     } else {
-        rsx! { Icon { data: tabler::Robot, size: "24" } }
+        rsx! { Icon { data: tabler::Robot, size: "20" } }
     }
 }
 

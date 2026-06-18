@@ -452,7 +452,6 @@ impl ConversationStore {
         created_at: DateTime<Utc>,
         row_updated_at: DateTime<Utc>,
     ) {
-        use std::collections::hash_map::Entry;
         let entry = conv_map.entry(conv_id.to_string()).or_insert_with(|| Conversation {
             id: conv_id.to_string(),
             title: title.to_string(),

@@ -1540,7 +1540,7 @@ impl ConversationStore {
         &mut self,
         content: String,
         config: XEChatConfig,
-        mut toast_sender: impl FnMut(ToastKind, String) + 'static,
+        toast_sender: impl FnMut(ToastKind, String) + 'static,
     ) {
         let (conv_id, is_first_message, cancel_for_recv, provider, all_messages) =
             match self.prepare_message_payload(&content, &config).await {

@@ -224,6 +224,7 @@ pub fn render_to_html(content: &str, theme: SyntaxTheme) -> String {
     options.extension.highlight = true;
     options.extension.alerts = true;
     options.extension.description_lists = true;
+    options.render.hardbreaks = true;
     options.render.r#unsafe = true;
 
     let mut plugins = Plugins::default();
