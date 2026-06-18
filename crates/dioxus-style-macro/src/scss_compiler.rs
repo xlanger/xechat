@@ -52,20 +52,24 @@ fn hash_content(content: &str, minify: bool) -> u64 {
     hasher.finish()
 }
 
-#[must_use = "compiled CSS should be used"]
-pub fn compile_scss_to_css(
-    content: &str,
-    file_path: Option<&str>,
-    minify: bool,
-) -> Result<String, String> {
-    use grass::{Options, OutputStyle};
-
+/// Checks the SCSS cache for a previously compiled result.
+///
+/// Returns `Some(css)` if the cache contains an entry for the given
+/// `content` + `minify` combination, otherwise `None`.
+#[inline]
+fn try_cache_get(content: &str, minify: bool) -> Option<String> {
     let cache_key = hash_content(content, minify);
-    if let Ok(cache) = get_cache().read() {
-        if let Some(cached) = cache.get(&cache_key) {
-            return Ok(cached.clone());
-        }
-    }
+    let cache = get_cache().read().ok()?;
+    cache.get(&cache_key).cloned()
+}
+
+/// Builds grass [`Options`] with the appropriate output style and load paths.
+///
+/// Load paths are derived from `CARGO_MANIFEST_DIR` to support `@import`
+/// resolution against `src/styles`, `src`, and the manifest root.
+#[inline]
+fn build_grass_options(minify: bool) -> grass::Options<'static> {
+    use grass::{Options, OutputStyle};
 
     let mut options = Options::default().style(if minify {
         OutputStyle::Compressed
@@ -77,7 +81,7 @@ pub fn compile_scss_to_css(
     let manifest_dir = env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_default();
-    let load_paths = vec![
+    let load_paths = [
         manifest_dir.join("src/styles"),
         manifest_dir.join("src"),
         manifest_dir.clone(),
@@ -87,7 +91,42 @@ pub fn compile_scss_to_css(
             options = options.load_path(&path);
         }
     }
+    options
+}
 
+/// Inserts a compiled CSS result into the SCSS cache.
+///
+/// Silently no-ops if the cache lock cannot be acquired.
+#[inline]
+fn cache_insert(content: &str, minify: bool, result: String) {
+    let cache_key = hash_content(content, minify);
+    if let Ok(mut cache) = get_cache().write() {
+        cache.insert(cache_key, result);
+    }
+}
+
+/// Compiles SCSS source to CSS with caching and load-path support.
+///
+/// # Arguments
+///
+/// * `content` - SCSS source text.
+/// * `file_path` - Optional path used to enrich error messages.
+/// * `minify` - Whether to emit compressed (minified) output.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if the SCSS source fails to compile.
+#[must_use = "compiled CSS should be used"]
+pub fn compile_scss_to_css(
+    content: &str,
+    file_path: Option<&str>,
+    minify: bool,
+) -> Result<String, String> {
+    if let Some(cached) = try_cache_get(content, minify) {
+        return Ok(cached);
+    }
+
+    let options = build_grass_options(minify);
     let result = grass::from_string(content.to_string(), &options).map_err(|e| {
         if let Some(path) = file_path {
             format!("SCSS compilation error in '{}': {}", path, e)
@@ -96,14 +135,122 @@ pub fn compile_scss_to_css(
         }
     })?;
 
-    if let Ok(mut cache) = get_cache().write() {
-        cache.insert(cache_key, result.clone());
-    }
-
+    cache_insert(content, minify, result.clone());
     Ok(result)
 }
 
 #[inline]
 pub fn is_scss_file(path: &str) -> bool {
     path.ends_with(".scss") || path.ends_with(".sass")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- is_scss_file ----
+
+    #[test]
+    fn test_is_scss_file() {
+        assert!(is_scss_file("style.scss"));
+        assert!(is_scss_file("style.sass"));
+        assert!(!is_scss_file("style.css"));
+        assert!(!is_scss_file("style.txt"));
+        assert!(!is_scss_file(""));
+    }
+
+    // ---- compile_scss_to_css ----
+
+    #[test]
+    fn test_compile_simple_scss() {
+        let result = compile_scss_to_css(".a { color: red; }", None, false);
+        assert!(result.is_ok(), "expected ok, got: {:?}", result.err());
+        let css = result.unwrap();
+        assert!(css.contains(".a"));
+    }
+
+    #[test]
+    fn test_compile_scss_with_variables() {
+        let scss = "$color: red; .a { color: $color; }";
+        let result = compile_scss_to_css(scss, None, false);
+        assert!(result.is_ok(), "expected ok, got: {:?}", result.err());
+        let css = result.unwrap();
+        assert!(css.contains("red"));
+    }
+
+    #[test]
+    fn test_compile_minified_output() {
+        let result = compile_scss_to_css(".a { color: red; }", None, true);
+        assert!(result.is_ok());
+        let css = result.unwrap();
+        assert!(
+            !css.contains('\n'),
+            "minified output should not contain newlines: {}",
+            css
+        );
+    }
+
+    #[test]
+    fn test_compile_expanded_output() {
+        let result = compile_scss_to_css(".a { color: red; }", None, false);
+        assert!(result.is_ok());
+        let css = result.unwrap();
+        assert!(css.contains("red"));
+    }
+
+    #[test]
+    fn test_compile_cached_returns_same_result() {
+        let scss = ".cache_test_selector { color: red; }";
+        let r1 = compile_scss_to_css(scss, None, false).unwrap();
+        let r2 = compile_scss_to_css(scss, None, false).unwrap();
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_compile_invalid_scss_returns_error() {
+        // Unclosed brace should produce a parse error
+        let result = compile_scss_to_css(".a { color: red;", None, false);
+        assert!(result.is_err(), "expected error for invalid SCSS");
+    }
+
+    // ---- ScssCache ----
+
+    #[test]
+    fn test_scss_cache_insert_and_get() {
+        let mut cache = ScssCache::new();
+        cache.insert(1, "value1".to_string());
+        assert_eq!(cache.get(&1), Some(&"value1".to_string()));
+        assert_eq!(cache.get(&2), None);
+    }
+
+    #[test]
+    fn test_scss_cache_overwrite_existing_key() {
+        let mut cache = ScssCache::new();
+        cache.insert(1, "old".to_string());
+        cache.insert(1, "new".to_string());
+        assert_eq!(cache.get(&1), Some(&"new".to_string()));
+    }
+
+    #[test]
+    fn test_scss_cache_lru_eviction() {
+        let mut cache = ScssCache::new();
+        // Fill cache up to MAX_CACHE_SIZE
+        for i in 0..MAX_CACHE_SIZE {
+            cache.insert(i as u64, format!("value{}", i));
+        }
+        assert_eq!(cache.get(&0), Some(&"value0".to_string()));
+        // Insert one more — should evict the oldest entry (key 0)
+        cache.insert(MAX_CACHE_SIZE as u64, "new_value".to_string());
+        assert_eq!(
+            cache.get(&0),
+            None,
+            "oldest entry should have been evicted"
+        );
+        assert_eq!(
+            cache.get(&(MAX_CACHE_SIZE as u64)),
+            Some(&"new_value".to_string())
+        );
+        // Key 1 should still be present
+        assert_eq!(cache.get(&1), Some(&"value1".to_string()));
+    }
 }

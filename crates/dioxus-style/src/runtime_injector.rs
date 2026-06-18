@@ -116,6 +116,16 @@ impl StyleRegistry {
             return "";
         }
 
+        // Build combined CSS and cache for future calls
+        let result = self.build_combined_css();
+        self.cached_output = Some(result);
+        self.cached_output.as_ref().unwrap()
+    }
+
+    /// Builds the combined CSS string from all registered styles in insertion order.
+    /// Pre-calculates total size to avoid reallocations.
+    #[inline]
+    fn build_combined_css(&self) -> String {
         // Pre-calculate total size to avoid reallocations
         let total_size: usize = self
             .styles
@@ -132,9 +142,7 @@ impl StyleRegistry {
             }
         }
 
-        // Cache the result for future calls
-        self.cached_output = Some(result);
-        self.cached_output.as_ref().unwrap()
+        result
     }
 
     /// Checks if a style hash is already registered.
@@ -218,5 +226,140 @@ impl ScopedStyle {
 impl std::fmt::Display for ScopedStyle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.scope)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_empty_registry() {
+        let registry = StyleRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn register_adds_style_and_increments_len() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        assert_eq!(registry.len(), 1);
+        assert!(!registry.is_empty());
+    }
+
+    #[test]
+    fn register_duplicate_hash_updates_css_content() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        registry.register("hash1", "css2");
+        // Duplicate hash should not increment count
+        assert_eq!(registry.len(), 1);
+        // Content should be updated
+        assert_eq!(registry.get_style("hash1"), Some("css2"));
+    }
+
+    #[test]
+    fn contains_returns_true_for_registered_false_for_unregistered() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        assert!(registry.contains("hash1"));
+        assert!(!registry.contains("hash2"));
+    }
+
+    #[test]
+    fn get_style_returns_some_for_registered_none_for_unregistered() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        assert_eq!(registry.get_style("hash1"), Some("css1"));
+        assert_eq!(registry.get_style("hash2"), None);
+    }
+
+    #[test]
+    fn get_all_styles_returns_styles_joined_with_newlines_in_insertion_order() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        registry.register("hash2", "css2");
+        registry.register("hash3", "css3");
+        let styles = registry.get_all_styles();
+        assert_eq!(styles, "css1\ncss2\ncss3\n");
+    }
+
+    #[test]
+    fn get_all_styles_returns_empty_string_for_empty_registry() {
+        let mut registry = StyleRegistry::new();
+        let styles = registry.get_all_styles();
+        assert_eq!(styles, "");
+    }
+
+    #[test]
+    fn get_all_styles_cache_works_second_call_returns_same_content() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        registry.register("hash2", "css2");
+        let first = registry.get_all_styles().to_string();
+        let second = registry.get_all_styles().to_string();
+        assert_eq!(first, second);
+        assert_eq!(first, "css1\ncss2\n");
+    }
+
+    #[test]
+    fn get_all_styles_cache_invalidation_on_new_register() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        let _ = registry.get_all_styles(); // populate cache
+        registry.register("hash2", "css2"); // should invalidate cache
+        let styles = registry.get_all_styles();
+        assert_eq!(styles, "css1\ncss2\n");
+    }
+
+    #[test]
+    fn get_all_styles_cache_invalidation_on_duplicate_register() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        let _ = registry.get_all_styles(); // populate cache
+        registry.register("hash1", "css1_updated"); // should invalidate cache
+        let styles = registry.get_all_styles();
+        assert_eq!(styles, "css1_updated\n");
+    }
+
+    #[test]
+    fn clear_removes_all_styles_and_invalidates_cache() {
+        let mut registry = StyleRegistry::new();
+        registry.register("hash1", "css1");
+        registry.register("hash2", "css2");
+        let _ = registry.get_all_styles(); // populate cache
+        registry.clear();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+        assert_eq!(registry.get_all_styles(), "");
+    }
+
+    #[test]
+    fn len_and_is_empty_track_count_correctly() {
+        let mut registry = StyleRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+        registry.register("hash1", "css1");
+        assert_eq!(registry.len(), 1);
+        registry.register("hash2", "css2");
+        assert_eq!(registry.len(), 2);
+        registry.register("hash1", "css1_updated"); // duplicate, no increment
+        assert_eq!(registry.len(), 2);
+        registry.clear();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn scoped_style_new_does_not_panic() {
+        // Just verify it doesn't panic; uses global registry
+        let _ = ScopedStyle::new("test_scope_new_1", "test_css_1");
+    }
+
+    #[test]
+    fn scoped_style_scope_returns_scope_string() {
+        let scoped = ScopedStyle::new("test_scope_new_2", "test_css_2");
+        assert_eq!(scoped.scope(), "test_scope_new_2");
     }
 }
