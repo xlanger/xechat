@@ -188,8 +188,10 @@ settings:
   presence-penalty-hint: "Encourages talking about new topics instead of repeating previous ones. Range 0-2, 0 means off."
   context-window-hint: "Maximum context length this model supports. Larger windows retain more conversation history."
   stop-sequences-hint: 'Comma-separated phrases that stop generation when encountered (e.g., "END", "###").'
-  ollama-host-hint: "Local Ollama service address. Default is http://localhost:11434. Make sure Ollama is running."
-  ollama-embed-model: "Embed Model"
+  ollama-host-hint: "Local Ollama service address, default http://localhost:11434. Make sure Ollama is running."
+  ollama-chat-models: Chat Models
+  ollama-chat-models-hint: "Extend Ollama chat models for generating responses, not for embedding."
+  ollama-embed-provider: "Embed Model"
   ollama-embed-model-placeholder: "e.g. qwen3-embedding:4b"
   ollama-chat-provider: "Chat Model"
   ollama-chat-model: "Chat Model"

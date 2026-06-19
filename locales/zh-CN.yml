@@ -189,6 +189,8 @@ settings:
   context-window-hint: "该模型支持的最大上下文长度。更大的窗口能保留更多对话历史。"
   stop-sequences-hint: '遇到这些短语时停止生成，用逗号分隔（如 "END", "###"）。'
   ollama-host-hint: "本地 Ollama 服务地址，默认 http://localhost:11434。请确保 Ollama 已启动。"
+  ollama-chat-models: 对话模型
+  ollama-chat-models-hint: "扩展 Ollama 对话模型用于生成回复，非嵌入模型。"
   ollama-embed-model: 嵌入模型
   ollama-embed-model-placeholder: "如 Qwen3-Embedding-4B"
   ollama-chat-provider: 对话模型

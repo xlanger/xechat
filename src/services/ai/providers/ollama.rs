@@ -30,13 +30,32 @@ pub fn build_request_body(params: &SendMessageParams) -> serde_json::Value {
         })
         .collect();
 
+    let mut options = serde_json::json!({
+        "temperature": params.temperature.unwrap_or(0.7),
+    });
+
+    if let Some(top_p) = params.top_p {
+        options["top_p"] = serde_json::json!(top_p);
+    }
+
+    if let Some(mc) = &params.model_config {
+        options["num_predict"] = serde_json::json!(mc.max_tokens);
+        if mc.frequency_penalty != 0.0 {
+            options["frequency_penalty"] = serde_json::json!(mc.frequency_penalty);
+        }
+        if mc.presence_penalty != 0.0 {
+            options["presence_penalty"] = serde_json::json!(mc.presence_penalty);
+        }
+        if !mc.stop_sequences.is_empty() {
+            options["stop"] = serde_json::json!(mc.stop_sequences);
+        }
+    }
+
     serde_json::json!({
         "model": params.model,
         "messages": messages,
         "stream": true,
-        "options": {
-            "temperature": params.temperature.unwrap_or(0.7),
-        }
+        "options": options,
     })
 }
 
