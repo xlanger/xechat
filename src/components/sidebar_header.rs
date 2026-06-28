@@ -18,7 +18,7 @@ pub fn SidebarHeader() -> Element {
     let app_store = use_app();
 
     let onclick = {
-        let mut app_store = app_store.clone();
+        let mut app_store = app_store;
         let mut conv_store = conv_store.clone();
         move |_| {
             conv_store.current_conversation_id.set(None);

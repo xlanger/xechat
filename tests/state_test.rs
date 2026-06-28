@@ -35,7 +35,7 @@ fn test_theme_mode_copy() {
 #[test]
 fn test_theme_mode_clone() {
     let mode = ThemeMode::Light;
-    let cloned = mode.clone();
+    let cloned = mode;
     assert_eq!(mode, cloned);
 }
 

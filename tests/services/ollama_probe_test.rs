@@ -77,9 +77,11 @@ fn test_populate_models_only_first_embed_and_chat() {
 
 #[test]
 fn test_populate_models_already_set_not_overridden() {
-    let mut status = OllamaStatus::default();
-    status.embed_model = Some("existing-embed".to_string());
-    status.chat_model = Some("existing-chat".to_string());
+    let mut status = OllamaStatus {
+        embed_model: Some("existing-embed".to_string()),
+        chat_model: Some("existing-chat".to_string()),
+        ..Default::default()
+    };
 
     populate_models_from_json(&mut status, serde_json::json!({
         "models": [{"name": "qwen3-embedding:0.6b"}, {"name": "llama3.1:8b"}]

@@ -49,14 +49,14 @@ pub fn RenameModal() -> Element {
                     let id = conv_id.clone();
                     let new_title = input_value.read().clone();
                     let conv_store = conv_store.clone();
-                    let ui_store = ui_store.clone();
+                    let ui_store = ui_store;
                     move |evt| {
                         if evt.key() == Key::Enter && !new_title.trim().is_empty() {
                             evt.prevent_default();
                             let id = id.clone();
                             let nt = new_title.trim().to_string();
                             let mut conv_store = conv_store.clone();
-                            let mut ui_store = ui_store.clone();
+                            let mut ui_store = ui_store;
                             spawn(async move {
                                 if conv_store.rename_conversation(&id, &nt).await.is_ok() {
                                     ui_store.show_rename_modal.set(None);
@@ -83,13 +83,13 @@ pub fn RenameModal() -> Element {
                         let id = conv_id.clone();
                         let nt = input_value.read().trim().to_string();
                         let conv_store = conv_store.clone();
-                        let ui_store = ui_store.clone();
+                        let ui_store = ui_store;
                         move |_| {
                             if nt.is_empty() { return; }
                             let id = id.clone();
                             let nt = nt.clone();
                             let mut conv_store = conv_store.clone();
-                            let mut ui_store = ui_store.clone();
+                            let mut ui_store = ui_store;
                             spawn(async move {
                                 if conv_store.rename_conversation(&id, &nt).await.is_ok() {
                                     ui_store.show_rename_modal.set(None);

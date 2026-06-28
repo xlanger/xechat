@@ -201,8 +201,10 @@ fn test_compute_newer_window_end_beyond() {
 #[test]
 fn test_sync_ollama_host_ollama_with_host() {
     let mut provider = make_model_provider("http://original:11434");
-    let mut config = XEChatConfig::default();
-    config.model_provider = "ollama".to_string();
+    let mut config = XEChatConfig {
+        model_provider: "ollama".to_string(),
+        ..Default::default()
+    };
     config.preferences.ollama.host = "http://custom:11434".to_string();
     sync_ollama_host_to_provider(&mut provider, &config);
     assert_eq!(provider.base_url, "http://custom:11434");
@@ -211,8 +213,10 @@ fn test_sync_ollama_host_ollama_with_host() {
 #[test]
 fn test_sync_ollama_host_ollama_without_host() {
     let mut provider = make_model_provider("http://original:11434");
-    let mut config = XEChatConfig::default();
-    config.model_provider = "ollama".to_string();
+    let mut config = XEChatConfig {
+        model_provider: "ollama".to_string(),
+        ..Default::default()
+    };
     config.preferences.ollama.host = String::new();
     sync_ollama_host_to_provider(&mut provider, &config);
     assert_eq!(provider.base_url, "http://original:11434");
@@ -221,8 +225,10 @@ fn test_sync_ollama_host_ollama_without_host() {
 #[test]
 fn test_sync_ollama_host_non_ollama() {
     let mut provider = make_model_provider("http://original:11434");
-    let mut config = XEChatConfig::default();
-    config.model_provider = "openai".to_string();
+    let mut config = XEChatConfig {
+        model_provider: "openai".to_string(),
+        ..Default::default()
+    };
     config.preferences.ollama.host = "http://custom:11434".to_string();
     sync_ollama_host_to_provider(&mut provider, &config);
     assert_eq!(provider.base_url, "http://original:11434");

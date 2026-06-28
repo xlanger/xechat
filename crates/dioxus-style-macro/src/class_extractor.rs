@@ -277,7 +277,7 @@ fn push_paren_char(inner: &mut String, c: char, depth: &mut usize) -> bool {
 fn consume_paren_content(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     let mut depth = 1;
     let mut inner = String::new();
-    while let Some(c) = chars.next() {
+    for c in chars.by_ref() {
         if push_paren_char(&mut inner, c, &mut depth) {
             break;
         }
@@ -304,7 +304,7 @@ fn extract_pseudo_component(
 
 #[inline]
 fn extract_attribute_component(chars: &mut std::iter::Peekable<std::str::Chars>) {
-    while let Some(c) = chars.next() {
+    for c in chars.by_ref() {
         if c == ']' {
             break;
         }

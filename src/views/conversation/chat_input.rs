@@ -111,6 +111,7 @@ fn handle_input_keydown(
 }
 
 /// 渲染输入框底部工具栏（模型选择器 + 发送按钮）。
+#[allow(clippy::too_many_arguments)]
 fn render_input_actions(
     toolbar_class: dioxus_style::CssClass,
     model_selectors_class: dioxus_style::CssClass,
@@ -234,7 +235,7 @@ pub fn ChatInput() -> Element {
     };
 
     let select_model_item: Rc<RefCell<dyn FnMut(String)>> = Rc::new(RefCell::new({
-        let mut app_store = app_store.clone();
+        let mut app_store = app_store;
         let mut model_open = model_open;
         move |v: String| {
             if let Some(config) = app_store.config.write().as_mut() {
@@ -245,7 +246,7 @@ pub fn ChatInput() -> Element {
     }));
 
     let goto_settings = {
-        let mut app_store = app_store.clone();
+        let mut app_store = app_store;
         move |_| {
             model_open.set(false);
             app_store.navigate_to(MainRoute::Settings);
@@ -260,7 +261,7 @@ pub fn ChatInput() -> Element {
     // 发送消息的公共逻辑，用 Rc<RefCell> 共享于多个闭包
     let send_message: Rc<RefCell<dyn FnMut()>> = Rc::new(RefCell::new({
         let mut conv_store = conv_store.clone();
-        let mut app_store = app_store.clone();
+        let mut app_store = app_store;
         let mut input_value = input_value;
         move || {
             let content = input_value.read().trim().to_string();

@@ -140,20 +140,18 @@ pub async fn handle_error_response(
 
 /// 处理 `response.output_text.delta` 事件，提取文本增量并发送。
 fn handle_response_delta(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(delta) = json["delta"].as_str() {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+        && let Some(delta) = json["delta"].as_str() {
             let _ = tx.send(StreamEvent::Chunk(delta.to_string()));
         }
-    }
 }
 
 /// 处理 `response.reasoning.delta` 事件，提取推理增量并发送。
 fn handle_reasoning_delta(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(delta) = json["delta"].as_str() {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data)
+        && let Some(delta) = json["delta"].as_str() {
             let _ = tx.send(StreamEvent::ReasoningChunk(delta.to_string()));
         }
-    }
 }
 
 /// 处理 `response.error` 事件，提取错误消息并发送。

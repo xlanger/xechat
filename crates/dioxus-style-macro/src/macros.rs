@@ -26,11 +26,10 @@ fn find_used_class_names(tokens: &proc_macro2::TokenStream, namespace: &str) -> 
         let after_ns = search_start + pos + namespace.len();
         let rest = &s[after_ns..];
         let rest_trimmed = rest.trim_start();
-        if let Some(after_colons) = rest_trimmed.strip_prefix("::") {
-            if let Some(class_name) = extract_class_after_namespace(after_colons.trim_start()) {
+        if let Some(after_colons) = rest_trimmed.strip_prefix("::")
+            && let Some(class_name) = extract_class_after_namespace(after_colons.trim_start()) {
                 used.insert(class_name);
             }
-        }
         search_start = after_ns;
     }
 
@@ -156,7 +155,7 @@ fn check_single_selector_for_class(
     for class_start in selector_part.match_indices('.') {
         let after_dot = &selector_part[class_start.0 + 1..];
         let class_end = after_dot
-            .find(|c: char| matches!(c, '{' | ':' | ' ' | ',' | '.' | '[' | '>' | '+' | '~'))
+            .find(['{', ':', ' ', ',', '.', '[', '>', '+', '~'])
             .unwrap_or(after_dot.len());
         let selector_class = &after_dot[..class_end];
         if class_names.contains(selector_class) {
@@ -590,7 +589,7 @@ fn try_parse_next_entry(
         return Ok(false);
     }
     style_files.push(parse_style_file_entry(input)?);
-    Ok(consume_optional_separator(input)?)
+    consume_optional_separator(input)
 }
 
 /// Validates that at least one style file was parsed.

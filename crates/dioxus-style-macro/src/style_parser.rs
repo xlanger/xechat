@@ -144,13 +144,11 @@ fn handle_at_rule(rule: &str, scope: &str) -> Option<String> {
     if is_passthrough_at_rule(at_name) {
         return Some(rule.to_string());
     }
-    if is_scoping_at_rule(at_name) {
-        if let Some(brace_pos) = rule.find('{') {
-            if let Some(scoped) = scope_nested_at_rule(rule, brace_pos, scope) {
+    if is_scoping_at_rule(at_name)
+        && let Some(brace_pos) = rule.find('{')
+            && let Some(scoped) = scope_nested_at_rule(rule, brace_pos, scope) {
                 return Some(scoped);
             }
-        }
-    }
     Some(rule.to_string())
 }
 
@@ -288,7 +286,7 @@ fn push_paren_char(content: &mut String, c: char, depth: &mut usize) -> bool {
 fn extract_paren_content(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     let mut content = String::new();
     let mut depth = 1;
-    while let Some(c) = chars.next() {
+    for c in chars.by_ref() {
         if push_paren_char(&mut content, c, &mut depth) {
             break;
         }
@@ -340,11 +338,10 @@ fn handle_escape(
     result: &mut String,
     in_quote: Option<char>,
 ) -> Option<char> {
-    if in_quote.is_some() {
-        if let Some(escaped) = chars.next() {
+    if in_quote.is_some()
+        && let Some(escaped) = chars.next() {
             result.push(escaped);
         }
-    }
     in_quote
 }
 
@@ -512,7 +509,7 @@ fn should_preserve_space(last_ch: char) -> bool {
 }
 
 #[inline]
-fn should_add_space(result: &String, last_was_space: bool) -> bool {
+fn should_add_space(result: &str, last_was_space: bool) -> bool {
     if last_was_space || result.is_empty() {
         return false;
     }

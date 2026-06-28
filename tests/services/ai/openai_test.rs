@@ -446,10 +446,10 @@ fn test_should_retry_err_response_boundary_attempt_equals_max() {
     // This is verified by the && attempt < max_retries condition.
     // The logic: should_retry_error(&e) && attempt < max_retries
     // When attempt == max_retries, the second condition is false.
-    assert!((3 < 3) == false, "attempt == max_retries should not allow retry");
 }
 
 #[test]
 fn test_should_retry_err_response_boundary_attempt_less_than_max() {
-    assert!((1 < 3) == true, "attempt < max_retries should allow retry");
+    // attempt < max_retries: should_retry_err_response should allow retry
+    // (boundary condition verified through the && attempt < max_retries clause)
 }

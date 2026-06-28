@@ -74,13 +74,11 @@ pub fn ModelParamsSection(provider_key: String, model_name: String) -> Element {
                                     provider.models.remove(&mn);
                                 }
                                 // 如果删除的是当前使用的模型，自动切换到同 Provider 下的第一个模型
-                                if config.model == mn && config.model_provider == pk {
-                                    if let Some(provider) = config.model_providers.get(&pk) {
-                                        if let Some(first_model) = provider.models.keys().next() {
+                                if config.model == mn && config.model_provider == pk
+                                    && let Some(provider) = config.model_providers.get(&pk)
+                                        && let Some(first_model) = provider.models.keys().next() {
                                             config.model = first_model.clone();
                                         }
-                                    }
-                                }
                             });
                         }
                     },
@@ -615,8 +613,7 @@ pub fn ProviderSection(provider_key: String) -> Element {
                                             let pk = pk.clone();
                                             app_store.update_config(|config| {
                                                 if let Some(provider) = config.model_providers.get_mut(&pk) {
-                                                    if !provider.models.contains_key(&name) {
-                                                        provider.models.insert(name, ModelConfig {
+                                                    provider.models.entry(name).or_insert_with(|| ModelConfig {
                                                             max_tokens: 4096,
                                                             temperature: 0.7,
                                                             top_p: 0.9,
@@ -625,7 +622,6 @@ pub fn ProviderSection(provider_key: String) -> Element {
                                                             context_window: 8192,
                                                             stop_sequences: vec![],
                                                         });
-                                                    }
                                                 }
                                             });
                                             new_model_name.set(String::new());
@@ -647,8 +643,7 @@ pub fn ProviderSection(provider_key: String) -> Element {
                                         let pk = pk.clone();
                                         app_store.update_config(|config| {
                                             if let Some(provider) = config.model_providers.get_mut(&pk) {
-                                                if !provider.models.contains_key(&name) {
-                                                    provider.models.insert(name, ModelConfig {
+                                                provider.models.entry(name).or_insert_with(|| ModelConfig {
                                                         max_tokens: 4096,
                                                         temperature: 0.7,
                                                         top_p: 0.9,
@@ -657,7 +652,6 @@ pub fn ProviderSection(provider_key: String) -> Element {
                                                         context_window: 8192,
                                                         stop_sequences: vec![],
                                                     });
-                                                }
                                             }
                                         });
                                         new_model_name.set(String::new());

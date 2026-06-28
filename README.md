@@ -10,7 +10,7 @@
 
 - **多模型支持** — DeepSeek、OpenAI、Ollama 及任意 OpenAI 兼容服务
 - **流式对话** — SSE/NDJSON 实时流式输出，支持推理过程展示
-- **智能记忆** — 本地 E5 嵌入 + LanceDB 向量检索，自动记忆关联对话
+- **智能记忆** — 本地 Qwen3-Embedding 嵌入 + LanceDB 向量检索，自动记忆关联对话
 - **语义搜索** — 全文搜索 + 向量检索混合搜索，快速定位历史对话
 - **本地优先** — 所有数据本地存储（LanceDB），API Key 支持环境变量引用
 - **跨平台** — macOS / Linux / Windows，透明标题栏 + 原生体验

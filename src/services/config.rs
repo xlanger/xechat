@@ -92,9 +92,7 @@ pub fn load_config() -> Result<XEChatConfig, String> {
 
     // 补全默认 provider：旧配置文件可能缺少新版本新增的 provider
     for (key, default_provider) in default.model_providers {
-        if !config.model_providers.contains_key(&key) {
-            config.model_providers.insert(key, default_provider);
-        }
+        config.model_providers.entry(key).or_insert(default_provider);
     }
 
     Ok(config)

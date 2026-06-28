@@ -142,11 +142,10 @@ impl LanceDbStore {
     /// 从 schema 中提取 vector 列的维度。
     fn extract_dim_from_schema(schema: &arrow_schema::Schema) -> Option<i32> {
         for field in schema.fields() {
-            if field.name() == "vector" {
-                if let arrow_schema::DataType::FixedSizeList(_, dim) = field.data_type() {
+            if field.name() == "vector"
+                && let arrow_schema::DataType::FixedSizeList(_, dim) = field.data_type() {
                     return Some(*dim);
                 }
-            }
         }
         None
     }
@@ -243,11 +242,10 @@ impl LanceDbStore {
     /// 写入 embedder 元数据文件。
     pub fn write_embedder_meta(&self, meta: &EmbedderMeta) {
         let path = Path::new(&self.lancedb_path).join(EMBEDDER_META_FILE);
-        if let Ok(content) = serde_json::to_string_pretty(meta) {
-            if let Err(e) = std::fs::write(&path, content) {
+        if let Ok(content) = serde_json::to_string_pretty(meta)
+            && let Err(e) = std::fs::write(&path, content) {
                 eprintln!("[xechat] Failed to write embedder meta: {}", e);
             }
-        }
     }
 
     /// 检测当前 embedder 与已记录的元数据是否匹配。
@@ -468,6 +466,7 @@ impl LanceDbStore {
     }
 
     /// 编码单个分块，失败自动重试最多 MAX_ENCODE_RETRIES 次。
+    #[allow(clippy::too_many_arguments)]
     async fn encode_single_chunk_with_retry(
         embedder: &Arc<dyn crate::services::embedder::Embedder>,
         text: &str,
@@ -683,14 +682,14 @@ impl LanceDbStore {
         let conv_ids = StringArray::from_iter_values(entry.chunks.iter().map(|_| entry.conversation_id.as_str()));
         let user_msg_ids = StringArray::from_iter_values(entry.chunks.iter().map(|_| entry.user_message_id.as_str()));
         let asst_msg_ids = StringArray::from_iter_values(entry.chunks.iter().map(|_| entry.assistant_message_id.as_str()));
-        let turn_indices = Int32Array::from_iter_values(std::iter::repeat(entry.turn_index as i32).take(n));
+        let turn_indices = Int32Array::from_iter_values(std::iter::repeat_n(entry.turn_index as i32, n));
         let user_contents = StringArray::from_iter_values(entry.chunks.iter().map(|_| entry.user_content.as_str()));
         let asst_contents = StringArray::from_iter_values(entry.chunks.iter().map(|_| entry.assistant_content.as_str()));
         let chunk_indices = Int32Array::from_iter_values(entry.chunks.iter().map(|c| c.chunk_index as i32));
         let chunk_texts = StringArray::from_iter_values(entry.chunks.iter().map(|c| c.chunk_text.as_str()));
         let start_chars = Int32Array::from_iter_values(entry.chunks.iter().map(|c| c.start_char as i32));
         let end_chars = Int32Array::from_iter_values(entry.chunks.iter().map(|c| c.end_char as i32));
-        let timestamps = StringArray::from_iter_values(std::iter::repeat(entry.timestamp.to_rfc3339()).take(n));
+        let timestamps = StringArray::from_iter_values(std::iter::repeat_n(entry.timestamp.to_rfc3339(), n));
         let vectors = Self::build_vectors_array(entry, vector_dim)?;
 
         Ok(RecordBatch::try_new(Self::turns_arrow_schema(vector_dim), vec![
@@ -945,6 +944,7 @@ impl LanceDbStore {
     }
 
     /// 处理单个 turn：检查是否已存在、分块、编码、写入。
+    #[allow(clippy::too_many_arguments)]
     async fn process_single_turn(
         &self,
         turn: RawTurn,
@@ -987,11 +987,10 @@ impl LanceDbStore {
     /// 重建向量索引并根据结果判断是否需要报错。
     async fn finalize_reembed(&self, success_count: usize, skipped_count: usize) -> anyhow::Result<(usize, usize)> {
         // 批量重建完成后，确保向量索引已构建（单条 add_turn 可能因行数不足跳过）
-        if success_count > 0 {
-            if let Err(e) = self.maybe_rebuild_vector_index().await {
+        if success_count > 0
+            && let Err(e) = self.maybe_rebuild_vector_index().await {
                 eprintln!("[xechat] reembed_turns: post-rebuild index check failed: {}", e);
             }
-        }
 
         if skipped_count > 0 && success_count == 0 {
             anyhow::bail!("All {} turns failed or were skipped", skipped_count);

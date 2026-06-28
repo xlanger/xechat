@@ -198,7 +198,7 @@ impl AppStore {
         let config = crate::services::config::load_config().unwrap_or_default();
         let primary_url = Self::resolve_primary_url(&config);
 
-        if primary_url.as_deref().map_or(false, Self::is_local_url) {
+        if primary_url.as_deref().is_some_and(Self::is_local_url) {
             self.network_available.set(true);
             return;
         }

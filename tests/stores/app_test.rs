@@ -386,8 +386,10 @@ fn test_resolve_primary_url_ollama_default() {
 #[test]
 fn test_resolve_primary_url_ollama_custom_host() {
     with_runtime(|| {
-        let mut config = XEChatConfig::default();
-        config.model_provider = "ollama".to_string();
+        let mut config = XEChatConfig {
+            model_provider: "ollama".to_string(),
+            ..Default::default()
+        };
         config.preferences.ollama.host = "http://192.168.1.100:11434".to_string();
         let url = AppStore::resolve_primary_url(&config);
         assert_eq!(url, Some("http://192.168.1.100:11434".to_string()));

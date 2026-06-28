@@ -162,7 +162,7 @@ async fn check_network_online() -> bool {
     // 本地服务视为在线
     if primary_url
         .as_deref()
-        .map_or(false, crate::stores::app::AppStore::is_local_url)
+        .is_some_and(crate::stores::app::AppStore::is_local_url)
     {
         return true;
     }
@@ -227,7 +227,7 @@ async fn check_embedder_ready() -> bool {
         let host = crate::stores::conversation::ConversationStore::resolve_ollama_host(
             &config.preferences.ollama.host,
         );
-        crate::services::ollama::probe::probe_host(&host).await
+        crate::services::ollama::probe::probe_host(host).await
     } else if crate::stores::conversation::is_ollama_provider_selected(&config) {
         // [加固] ollama provider 已选但 model 尚未配置 → 不就绪
         false
@@ -259,7 +259,7 @@ async fn ollama_heartbeat_task(tx: mpsc::Sender<HeartbeatEvent>) {
         let host = crate::stores::conversation::ConversationStore::resolve_ollama_host(
             &config.preferences.ollama.host,
         );
-        let online = crate::services::ollama::probe::probe_host(&host).await;
+        let online = crate::services::ollama::probe::probe_host(host).await;
 
         if last_state != Some(online) {
             eprintln!(

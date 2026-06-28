@@ -88,7 +88,7 @@ impl SearchStore {
         if page_size == 0 {
             return 1;
         }
-        (total + page_size - 1) / page_size
+        total.div_ceil(page_size)
     }
 
     pub async fn load_recent_conversations(&mut self) {

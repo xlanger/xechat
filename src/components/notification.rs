@@ -29,6 +29,7 @@ fn compute_notification_duration(
 }
 
 /// 渲染通知主体内容（图标 + 消息 + 关闭按钮）。
+#[allow(clippy::too_many_arguments)]
 fn render_notification_body(
     toast_data: &crate::stores::ui::Toast,
     visible: bool,

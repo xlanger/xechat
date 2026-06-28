@@ -67,7 +67,7 @@ pub fn GeneralSection() -> Element {
     let mut ollama_embed_models: Signal<Vec<String>> = use_signal(Vec::new);
 
     // 嵌入模型下载状态
-    let model_ready: Signal<bool> = use_signal(|| crate::services::model_downloader::is_model_ready());
+    let model_ready: Signal<bool> = use_signal(crate::services::model_downloader::is_model_ready);
     let model_downloading: Signal<bool> = use_signal(|| false);
     let model_progress: Signal<String> = use_signal(String::new);
     let model_progress_percent: Signal<u32> = use_signal(|| 0u32);
@@ -207,7 +207,7 @@ pub fn GeneralSection() -> Element {
             // 仅在切换回内置模式时重建（切换到 ollama 时 embed_model 尚为空，
             // 应等用户选完模型后由 on_select_embed_model 触发 reinit_embedder）
             if !is_ollama {
-                let mut ui = ui_store.clone();
+                let mut ui = ui_store;
                 let mut conv = conv_for_provider.clone();
                 spawn(async move {
                     let rebuilt = conv.reinit_embedder().await;
@@ -353,7 +353,7 @@ pub fn GeneralSection() -> Element {
                                         config.preferences.ollama.embed_model = v;
                                     });
                                     // ollama 嵌入模型变更时也触发重建
-                                    let mut ui = ui_store.clone();
+                                    let mut ui = ui_store;
                                     let mut conv = conv_for_model.clone();
                                     spawn(async move {
                                         let rebuilt = conv.reinit_embedder().await;
@@ -434,7 +434,6 @@ pub fn GeneralSection() -> Element {
                                         let mut model_downloading = model_downloading;
                                         let mut model_progress = model_progress;
                                         let mut model_progress_percent = model_progress_percent;
-                                        let model_ready = model_ready;
                                         let mut model_error = model_error;
                                         let conv_for_download = conv_store.clone();
                                         move |_| {

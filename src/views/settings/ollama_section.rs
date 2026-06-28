@@ -82,13 +82,11 @@ fn OllamaModelParams(model_name: String) -> Element {
                                 if let Some(provider) = config.model_providers.get_mut("ollama") {
                                     provider.models.remove(&mn);
                                 }
-                                if config.model == mn && config.model_provider == "ollama" {
-                                    if let Some(provider) = config.model_providers.get("ollama") {
-                                        if let Some(first_model) = provider.models.keys().next() {
+                                if config.model == mn && config.model_provider == "ollama"
+                                    && let Some(provider) = config.model_providers.get("ollama")
+                                        && let Some(first_model) = provider.models.keys().next() {
                                             config.model = first_model.clone();
                                         }
-                                    }
-                                }
                             });
                         }
                     },
@@ -486,8 +484,7 @@ pub fn OllamaSection() -> Element {
                                         if name.is_empty() { return; }
                                         app_store.update_config(|config| {
                                             if let Some(provider) = config.model_providers.get_mut("ollama") {
-                                                if !provider.models.contains_key(&name) {
-                                                    provider.models.insert(name, ModelConfig {
+                                                provider.models.entry(name).or_insert_with(|| ModelConfig {
                                                         max_tokens: 4096,
                                                         temperature: 0.7,
                                                         top_p: 0.9,
@@ -496,7 +493,6 @@ pub fn OllamaSection() -> Element {
                                                         context_window: 8192,
                                                         stop_sequences: vec![],
                                                     });
-                                                }
                                             }
                                         });
                                         new_model_name.set(String::new());
@@ -514,8 +510,7 @@ pub fn OllamaSection() -> Element {
                                     if name.is_empty() { return; }
                                     app_store.update_config(|config| {
                                         if let Some(provider) = config.model_providers.get_mut("ollama") {
-                                            if !provider.models.contains_key(&name) {
-                                                provider.models.insert(name, ModelConfig {
+                                            provider.models.entry(name).or_insert_with(|| ModelConfig {
                                                     max_tokens: 4096,
                                                     temperature: 0.7,
                                                     top_p: 0.9,
@@ -524,7 +519,6 @@ pub fn OllamaSection() -> Element {
                                                     context_window: 8192,
                                                     stop_sequences: vec![],
                                                 });
-                                            }
                                         }
                                     });
                                     new_model_name.set(String::new());

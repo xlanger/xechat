@@ -30,9 +30,9 @@ pub fn use_app() -> AppStore {
 pub fn use_app_provider() -> AppStore {
     let store = use_context_provider(AppStore::new);
 
-    let provider_store = store.clone();
+    let provider_store = store;
     use_effect(move || {
-        let mut provider_store = provider_store.clone();
+        let mut provider_store = provider_store;
         spawn(async move {
             provider_store.load_config().await;
         });

@@ -88,7 +88,7 @@ pub fn Layout() -> Element {
 
     // Command+K / Ctrl+K 新建对话
     let new_chat = {
-        let mut app_store = app_store.clone();
+        let mut app_store = app_store;
         let mut conv_store = conv_store.clone();
         move |_| {
             conv_store.current_conversation_id.set(None);

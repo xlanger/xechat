@@ -21,7 +21,7 @@
 //! - 所有 encode 请求通过 channel 发送到该线程处理
 //! - 模型永远存在于 Worker 的 TLS 中，零重复加载
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -139,7 +139,7 @@ fn resolve_platform_bundled_path(exe_dir: &std::path::Path, model_name: &str) ->
 }
 
 /// 构建 Qwen3-Embedding 模型配置。
-fn build_model_config(model_path: &PathBuf) -> anyhow::Result<ModelConfig> {
+fn build_model_config(model_path: &Path) -> anyhow::Result<ModelConfig> {
     ModelConfig::builder()
         .with_model_path(model_path.to_str().unwrap_or_default())
         .with_model_name("qwen3-embedding")
@@ -320,7 +320,7 @@ impl Qwen3Embedder {
     }
 
     /// 在 Worker 线程内部创建引擎（确保模型加载到 Worker 的 TLS）。
-    fn create_engine_in_worker(model_path: &PathBuf) -> anyhow::Result<(EmbeddingEngine, usize)> {
+    fn create_engine_in_worker(model_path: &Path) -> anyhow::Result<(EmbeddingEngine, usize)> {
         let model_config = build_model_config(model_path)?;
         create_engine(model_config)
     }

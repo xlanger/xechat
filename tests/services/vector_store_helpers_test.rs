@@ -102,11 +102,11 @@ fn make_hits_batch(
         Field::new("_distance", DataType::Float32, false),
     ]));
 
-    let user_msg_ids: Vec<String> = std::iter::repeat(String::new()).take(n).collect();
+    let user_msg_ids: Vec<String> = std::iter::repeat_n(String::new(), n).collect();
     let asst_msg_ids: Vec<String> = (0..n).map(|i| format!("msg_{}", i)).collect();
-    let user_contents: Vec<String> = std::iter::repeat(String::new()).take(n).collect();
-    let chunk_indices: Vec<i32> = std::iter::repeat(0).take(n).collect();
-    let timestamps: Vec<String> = std::iter::repeat("2024-01-01T00:00:00Z".to_string()).take(n).collect();
+    let user_contents: Vec<String> = std::iter::repeat_n(String::new(), n).collect();
+    let chunk_indices: Vec<i32> = std::iter::repeat_n(0, n).collect();
+    let timestamps: Vec<String> = std::iter::repeat_n("2024-01-01T00:00:00Z".to_string(), n).collect();
 
     RecordBatch::try_new(schema, vec![
         Arc::new(StringArray::from(conv_ids)),

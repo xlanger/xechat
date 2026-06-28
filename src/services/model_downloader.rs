@@ -78,7 +78,7 @@ async fn try_download_source(
 ) -> Result<PathBuf> {
     eprintln!("[model-downloader] Trying source: {}", source.name);
 
-    match download_from_source(&source.url, temp_path, target_path, on_progress).await {
+    match download_from_source(source.url, temp_path, target_path, on_progress).await {
         Ok(()) => {
             on_progress(DownloadProgress::Completed);
             eprintln!("[model-downloader] Download completed from {}", source.name);
@@ -138,13 +138,12 @@ pub fn create_download_client() -> Result<reqwest::Client> {
 
 /// 检查临时文件是否存在，返回断点续传的起始字节位置。
 pub fn get_resume_position(temp_path: &Path) -> u64 {
-    if temp_path.exists() {
-        if let Ok(meta) = temp_path.metadata() {
+    if temp_path.exists()
+        && let Ok(meta) = temp_path.metadata() {
             let pos = meta.len();
             eprintln!("[model-downloader] Resuming from {} bytes", pos);
             return pos;
         }
-    }
     0
 }
 

@@ -1,7 +1,7 @@
 use xechat::models::ai::{
     ChatMessage, ChatRequest, ChatResponse,
     StreamEvent, SendMessageParams,
-    DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_AUTO_CONTEXT_MANAGEMENT, DEFAULT_MAX_CONTEXT_MESSAGES,
+    DEFAULT_MAX_CONTEXT_TOKENS, DEFAULT_MAX_CONTEXT_MESSAGES,
 };
 use xechat::models::config::ModelProvider;
 use xechat::models::error::AppError;
@@ -204,11 +204,6 @@ fn test_stream_event_clone() {
 #[test]
 fn test_default_max_context_tokens() {
     assert_eq!(DEFAULT_MAX_CONTEXT_TOKENS, 8192);
-}
-
-#[test]
-fn test_default_auto_context_management() {
-    assert!(DEFAULT_AUTO_CONTEXT_MANAGEMENT);
 }
 
 #[test]

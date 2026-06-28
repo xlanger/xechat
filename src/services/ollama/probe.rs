@@ -84,11 +84,10 @@ async fn fetch_and_populate_models(client: &reqwest::Client, host: &str, status:
         .send()
         .await;
 
-    if let Ok(r) = resp {
-        if let Ok(json) = r.json::<serde_json::Value>().await {
+    if let Ok(r) = resp
+        && let Ok(json) = r.json::<serde_json::Value>().await {
             populate_models_from_json(status, json);
         }
-    }
 }
 
 /// 应用用户偏好覆盖自动探测的模型选择。

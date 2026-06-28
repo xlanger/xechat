@@ -15,9 +15,11 @@ fn make_model_config() -> ModelConfig {
 }
 
 fn make_test_config() -> XEChatConfig {
-    let mut config = XEChatConfig::default();
-    config.model_provider = "deepseek".to_string();
-    config.model = "deepseek-chat".to_string();
+    let mut config = XEChatConfig {
+        model_provider: "deepseek".to_string(),
+        model: "deepseek-chat".to_string(),
+        ..Default::default()
+    };
 
     let mut deepseek_models = HashMap::new();
     deepseek_models.insert("deepseek-chat".to_string(), make_model_config());

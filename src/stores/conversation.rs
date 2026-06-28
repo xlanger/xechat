@@ -335,11 +335,10 @@ impl ConversationStore {
     /// 使用 `load_sidebar_list` 仅加载 id/title/timestamp，不含消息和摘要。
     /// sidebar 组件通过 `SIDEBAR_MAX_CONVERSATIONS` 截取显示数量。
     pub async fn load_conversations(&mut self) {
-        if let Some(store) = crate::services::conversation_store::get_store() {
-            if let Ok(convs) = store.load_sidebar_list().await {
+        if let Some(store) = crate::services::conversation_store::get_store()
+            && let Ok(convs) = store.load_sidebar_list().await {
                 self.conversations.set(convs);
             }
-        }
     }
 
     /// 计算全量加载场景下的消息窗口范围。
@@ -1139,7 +1138,7 @@ impl ConversationStore {
     }
 
     /// 解析 Ollama 主机地址，空字符串时使用默认地址。
-    pub fn resolve_ollama_host<'a>(configured_host: &'a str) -> &'a str {
+    pub fn resolve_ollama_host(configured_host: &str) -> &str {
         if configured_host.is_empty() {
             "http://localhost:11434"
         } else {
@@ -1212,7 +1211,7 @@ impl ConversationStore {
     /// 按更新时间降序排列对话列表。
     fn sort_conversations_by_updated_at(&mut self) {
         let mut convs = self.conversations.write();
-        convs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        convs.sort_by_key(|c| std::cmp::Reverse(c.updated_at));
     }
 
     /// 持久化首条用户消息：保存对话到存储并标记为非临时。
@@ -1304,11 +1303,10 @@ impl ConversationStore {
 
     /// 执行记忆后处理：将助手回复与缓存的用户消息配对，聚合写入轮次向量。
     async fn postprocess_turn(conv_id: &str, assistant_msg_id: &str, body: &str) {
-        if let Some(pipeline) = crate::services::memory::get_pipeline() {
-            if let Err(e) = pipeline.postprocess(conv_id, assistant_msg_id, body).await {
+        if let Some(pipeline) = crate::services::memory::get_pipeline()
+            && let Err(e) = pipeline.postprocess(conv_id, assistant_msg_id, body).await {
                 eprintln!("[xechat] Turn postprocess failed: {}", e);
             }
-        }
     }
 
     /// 重命名对话标题（持久化 + 内存更新）。
@@ -1463,8 +1461,8 @@ impl ConversationStore {
         &mut self,
         action: StreamAction,
         conv_id: &str,
-        full_content: &mut String,
-        full_reasoning: &mut String,
+        full_content: &str,
+        full_reasoning: &str,
         is_first_message: bool,
     ) -> StreamLoopAction {
         match action {

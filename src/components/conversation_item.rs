@@ -44,6 +44,7 @@ fn item_more_btn_class(
 }
 
 /// 渲染对话项的右键上下文菜单（重命名/删除）。
+#[allow(clippy::too_many_arguments)]
 fn render_context_menu(
     is_menu_open: bool,
     menu_class: dioxus_style::CssClass,
@@ -121,8 +122,8 @@ pub fn ConversationItem(
     let select_conv = {
         let conv_id = conv_id.clone();
         let mut conv_store = conv_store.clone();
-        let mut app_store = app_store.clone();
-        let mut ui_store = ui_store.clone();
+        let mut app_store = app_store;
+        let mut ui_store = ui_store;
         move |_| {
             let cid = conv_id.clone();
             conv_store.select_conversation(cid.clone());

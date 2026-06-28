@@ -50,11 +50,11 @@ pub fn DeleteModal() -> Element {
                     onclick: {
                         let id = conv_id.clone();
                         let conv_store = _conv_store.clone();
-                        let ui_store = ui_store.clone();
+                        let ui_store = ui_store;
                         move |_| {
                             let id = id.clone();
                             let mut conv_store = conv_store.clone();
-                            let mut ui_store = ui_store.clone();
+                            let mut ui_store = ui_store;
                             spawn(async move {
                                 if conv_store.delete_conversation(&id).await.is_ok() {
                                     ui_store.show_delete_modal.set(None);

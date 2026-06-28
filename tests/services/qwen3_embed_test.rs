@@ -177,8 +177,8 @@ async fn test_batch_encode_multiple_texts() {
     let embedder = xechat::services::embedder::qwen3::Qwen3Embedder::new()
         .expect("Model must be present for integration test");
 
-    let texts = vec!["第一段文本", "第二段文本", "第三段文本"];
-    let results = embedder.encode(&texts.iter().map(|s| *s).collect::<Vec<_>>()).await.unwrap();
+    let texts = ["第一段文本", "第二段文本", "第三段文本"];
+    let results = embedder.encode(texts.as_ref()).await.unwrap();
 
     assert_eq!(results.len(), 3);
     for (i, vec) in results.iter().enumerate() {

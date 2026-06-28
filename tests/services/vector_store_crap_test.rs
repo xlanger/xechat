@@ -301,7 +301,7 @@ fn test_cosine_similarity_range_is_valid() {
     let a = vec![0.5, -0.3, 0.8, -0.1, 0.9];
     let b = vec![-0.2, 0.7, 0.4, -0.6, 0.3];
     let sim = cosine_similarity(&a, &b);
-    assert!(sim >= -1.0 && sim <= 1.0, "Cosine similarity {} out of range [-1, 1]", sim);
+    assert!((-1.0..=1.0).contains(&sim), "Cosine similarity {} out of range [-1, 1]", sim);
 }
 
 // ══════════════════════════════════════════════════════════════════

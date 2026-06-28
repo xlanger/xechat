@@ -110,21 +110,19 @@ pub async fn handle_error_response(
 
 /// 从 Ollama JSON 响应中提取内容并发送流事件。
 fn extract_ollama_content(json: &serde_json::Value, tx: &mpsc::UnboundedSender<StreamEvent>) {
-    if let Some(content) = json["message"]["content"].as_str() {
-        if !content.is_empty() {
+    if let Some(content) = json["message"]["content"].as_str()
+        && !content.is_empty() {
             let _ = tx.send(StreamEvent::Chunk(content.to_string()));
         }
-    }
     // Ollama 不同模型使用不同字段名表示推理过程：
     // - qwen3/deepseek-r1 等使用 "thinking"
     // - 部分模型使用 "reasoning_content"
     let reasoning_text = json["message"]["thinking"].as_str()
         .or_else(|| json["message"]["reasoning_content"].as_str());
-    if let Some(reasoning) = reasoning_text {
-        if !reasoning.is_empty() {
+    if let Some(reasoning) = reasoning_text
+        && !reasoning.is_empty() {
             let _ = tx.send(StreamEvent::ReasoningChunk(reasoning.to_string()));
         }
-    }
 }
 
 /// 解析 Ollama NDJSON 行中的单条 JSON 消息。
@@ -180,11 +178,10 @@ impl AiProvider for OllamaProvider {
 ///
 /// 成功解析的 JSON 行交由 `handle_ollama_json_line` 处理。
 fn parse_ollama_stream_line(line: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> bool {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-        if handle_ollama_json_line(&json, tx) {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(line)
+        && handle_ollama_json_line(&json, tx) {
             return true;
         }
-    }
     false
 }
 

@@ -38,6 +38,7 @@ fn header_wrapper_class(
 }
 
 /// 渲染对话头部的下拉菜单（重命名/删除）。
+#[allow(clippy::too_many_arguments)]
 fn render_header_actions(
     is_menu_open: bool,
     dropdown_class: dioxus_style::CssClass,

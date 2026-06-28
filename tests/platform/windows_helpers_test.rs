@@ -13,8 +13,6 @@ fn parse_reg_theme_output(output: Result<std::process::Output, std::io::Error>) 
     let stdout = String::from_utf8_lossy(&out.stdout);
     if stdout.contains("0x1") {
         SystemTheme::Light
-    } else if stdout.contains("0x0") {
-        SystemTheme::Dark
     } else {
         SystemTheme::Dark
     }

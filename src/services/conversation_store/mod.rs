@@ -187,6 +187,19 @@ struct SummaryState {
     last_assistant_time: DateTime<Utc>,
 }
 
+/// 消息字段元组：`(msg_ids, roles, contents, reasoning_contents, statuses, timestamps)`。
+type MessageFields = (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>);
+
+/// 从 RecordBatch 提取消息相关列的引用元组。
+///
+/// `conversation_id` 列为必需，缺失返回 `None`；其余列均为可选。
+type BatchColumns<'a> = (
+    &'a StringArray,
+    Option<&'a StringArray>, Option<&'a StringArray>, Option<&'a StringArray>,
+    Option<&'a StringArray>, Option<&'a StringArray>, Option<&'a StringArray>,
+    Option<&'a StringArray>, Option<&'a StringArray>, Option<&'a StringArray>,
+);
+
 fn track_assistant_message(
     entry: &mut SummaryState,
     cols: &SummaryColumns<'_>,
@@ -222,11 +235,10 @@ fn update_summary_entry(
     }
 
     // 跳过 __empty 占位行
-    if let Some(msg_ids) = cols.msg_ids {
-        if LanceDbStore::should_skip_empty_message(msg_ids.value(i)) {
+    if let Some(msg_ids) = cols.msg_ids
+        && LanceDbStore::should_skip_empty_message(msg_ids.value(i)) {
             return;
         }
-    }
 
     entry.message_count += 1;
     track_assistant_message(entry, cols, i);
@@ -235,10 +247,7 @@ fn update_summary_entry(
 impl ConversationStore {
     pub async fn open(path: &str, vector_store: Option<Arc<dyn crate::services::vector_store::VectorStore>>) -> anyhow::Result<Self> {
         let db = lancedb::connect(path).execute().await?;
-        let table = match db.open_table(TABLE_NAME).execute().await {
-            Ok(t) => Some(t),
-            Err(_) => None,
-        };
+        let table = db.open_table(TABLE_NAME).execute().await.ok();
         Ok(Self {
             db,
             table,
@@ -340,7 +349,7 @@ impl ConversationStore {
     }
 
     /// 构建空对话的占位消息字段。
-    fn build_empty_message_fields(conv: &Conversation) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    fn build_empty_message_fields(conv: &Conversation) -> MessageFields {
         (
             vec![format!("{}__empty", conv.id)],
             vec!["system".to_string()],
@@ -352,7 +361,7 @@ impl ConversationStore {
     }
 
     /// 从消息列表构建消息字段（msg_ids, roles, contents, reasoning_contents, statuses, timestamps）。
-    fn build_message_fields(messages: &[Message], max_msgs: usize) -> (Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>, Vec<String>) {
+    fn build_message_fields(messages: &[Message], max_msgs: usize) -> MessageFields {
         let mut msg_ids = Vec::with_capacity(max_msgs);
         let mut roles = Vec::with_capacity(max_msgs);
         let mut contents = Vec::with_capacity(max_msgs);
@@ -375,16 +384,14 @@ impl ConversationStore {
         let msg_count = conv.messages.len().max(1).min(max_msgs);
 
         let conv_ids = StringArray::from_iter_values(
-            std::iter::repeat(&conv.id).take(msg_count),
+            std::iter::repeat_n(&conv.id, msg_count),
         );
         let titles = StringArray::from_iter_values(
-            std::iter::repeat(&conv.title).take(msg_count),
+            std::iter::repeat_n(&conv.title, msg_count),
         );
-        let created_ats: Vec<String> = std::iter::repeat(conv.created_at.to_rfc3339())
-            .take(msg_count)
+        let created_ats: Vec<String> = std::iter::repeat_n(conv.created_at.to_rfc3339(), msg_count)
             .collect();
-        let updated_ats: Vec<String> = std::iter::repeat(conv.updated_at.to_rfc3339())
-            .take(msg_count)
+        let updated_ats: Vec<String> = std::iter::repeat_n(conv.updated_at.to_rfc3339(), msg_count)
             .collect();
 
         let (msg_ids, roles, contents, reasoning_contents, statuses, timestamps) =
@@ -415,12 +422,7 @@ impl ConversationStore {
     /// 从 RecordBatch 中提取所需的列引用。
     ///
     /// 返回所有列的引用元组，`conversation_id` 列为必需（缺失返回 None）。
-    fn extract_batch_columns(batch: &RecordBatch) -> Option<(
-        &StringArray,
-        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
-        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
-        Option<&StringArray>, Option<&StringArray>, Option<&StringArray>,
-    )> {
+    fn extract_batch_columns(batch: &RecordBatch) -> Option<BatchColumns<'_>> {
         let conv_ids = batch.column_by_name("conversation_id")
             .and_then(|c| c.as_any().downcast_ref::<StringArray>())?;
         let titles = batch.column_by_name("title")
@@ -553,15 +555,15 @@ impl ConversationStore {
         for (conv_id, msg_map) in temp_msg_map {
             if let Some(entry) = conv_map.get_mut(&conv_id) {
                 let mut messages: Vec<Message> = msg_map.into_values().collect();
-                messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                messages.sort_by_key(|a| a.timestamp);
                 entry.messages = messages;
             }
         }
     }
 
     /// 按更新时间降序排列对话列表。
-    fn sort_conversations_by_date(convs: &mut Vec<Conversation>) {
-        convs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    fn sort_conversations_by_date(convs: &mut [Conversation]) {
+        convs.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
     }
 
     fn batches_to_conversations(batches: &[RecordBatch]) -> Vec<Conversation> {
@@ -589,7 +591,7 @@ impl ConversationStore {
                 Self::upsert_conversation_meta(&mut conv_map, &conv_id, title, created_at, row_updated_at);
 
                 if let Some(msg) = Self::build_message_from_row(msg_ids, roles, contents, reasoning_contents, statuses, timestamps, i) {
-                    let msg_map = temp_msg_map.entry(conv_id).or_insert_with(HashMap::new);
+                    let msg_map = temp_msg_map.entry(conv_id).or_default();
                     Self::merge_message_entry(msg_map, msg);
                 }
             }
@@ -886,7 +888,7 @@ impl ConversationStore {
             })
             .collect();
 
-        convs.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        convs.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         convs
     }
 
@@ -948,7 +950,7 @@ impl ConversationStore {
             })
             .collect();
 
-        summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        summaries.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         summaries
     }
 
@@ -965,8 +967,8 @@ impl ConversationStore {
             role: old_msg.map(|m| m.role.clone()).unwrap_or(MessageRole::Assistant),
             content: new_content.to_string(),
             reasoning_content: old_msg.and_then(|m| m.reasoning_content.clone()),
-            timestamp: old_msg.map(|m| m.timestamp).unwrap_or_else(|| Utc::now()),
-            status: old_msg.map(|m| m.status.clone()).unwrap_or(MessageStatus::Sent),
+            timestamp: old_msg.map(|m| m.timestamp).unwrap_or_else(Utc::now),
+            status: old_msg.map(|m| m.status).unwrap_or(MessageStatus::Sent),
         }
     }
 
@@ -1132,7 +1134,7 @@ impl ConversationStore {
             curr.content_snippet.len() > prev.content_snippet.len()
         });
 
-        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        results.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         // 批量补全 message_count 和 last_assistant_snippet
         self.enrich_search_results(&mut results).await;
@@ -1332,12 +1334,15 @@ impl ConversationStore {
         on_progress: &(dyn Fn(usize, usize) + Send + Sync),
         force_rebuild: bool,
     ) -> anyhow::Result<(usize, usize)> {
-        let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
-        let vs = match vs_guard.as_ref() {
-            Some(vs) => vs,
-            None => return Err(anyhow::anyhow!("vector store not available")),
+        // 用嵌套块限定 guard 作用域，确保 await 前 guard 已 drop（await_holding_lock）
+        let vs_arc = {
+            let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
+            match vs_guard.as_ref() {
+                Some(vs) => Arc::clone(vs),
+                None => return Err(anyhow::anyhow!("vector store not available")),
+            }
         };
-        let lancedb = vs.as_any()
+        let lancedb = vs_arc.as_any()
             .downcast_ref::<crate::services::vector_store::lancedb_store::LanceDbStore>()
             .ok_or_else(|| anyhow::anyhow!("vector store is not LanceDbStore"))?;
         lancedb.reembed_turns(raw_turns, embedder, on_progress, force_rebuild).await
@@ -1447,18 +1452,21 @@ impl ConversationStore {
 
     /// 构建语义搜索查询，返回原始搜索命中列表。
     async fn build_semantic_query(&self, query_vector: &[f32], limit: usize) -> Vec<crate::models::memory::SearchHit> {
-        let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
-        let vs = match vs_guard.as_ref() {
-            Some(vs) => vs,
-            None => {
-                eprintln!("[xechat:search] vector_store is None");
-                return Vec::new();
+        // 用嵌套块限定 guard 作用域，确保 await 前 guard 已 drop（await_holding_lock）
+        let vs_arc = {
+            let vs_guard = self.vector_store.read().unwrap_or_else(|e| e.into_inner());
+            match vs_guard.as_ref() {
+                Some(vs) => Arc::clone(vs),
+                None => {
+                    eprintln!("[xechat:search] vector_store is None");
+                    return Vec::new();
+                }
             }
         };
         // 诊断：打印 vector_store 实例类型和指针
         eprintln!("[xechat:search] vector_store type={} ptr={:p}",
-            std::any::type_name_of_val(vs.as_ref()), vs.as_ref() as *const _);
-        let hits = vs.search_turns(query_vector, limit)
+            std::any::type_name_of_val(vs_arc.as_ref()), vs_arc.as_ref() as *const _);
+        let hits = vs_arc.search_turns(query_vector, limit)
             .await
             .unwrap_or_default();
 
@@ -1472,7 +1480,7 @@ impl ConversationStore {
     /// 对语义搜索命中进行过滤、去重和排序。
     fn rank_semantic_results(hits: &[crate::models::memory::SearchHit]) -> Vec<crate::models::memory::SearchResult> {
         let results: Vec<_> = hits.iter()
-            .filter_map(|hit| Self::hit_to_search_result(hit))
+            .filter_map(Self::hit_to_search_result)
             .collect();
 
         eprintln!("[xechat:search] after filter (score>=0.65): {} results", results.len());

@@ -144,15 +144,14 @@ fn handle_chat_response_delta(
 ///
 /// 返回 `true` 如果找到错误（流应终止），`false` 如果不是错误响应。
 fn try_handle_error_response(data: &str, tx: &mpsc::UnboundedSender<StreamEvent>) -> bool {
-    if let Ok(err_resp) = serde_json::from_str::<serde_json::Value>(data) {
-        if let Some(error_msg) = err_resp["error"]["message"].as_str() {
+    if let Ok(err_resp) = serde_json::from_str::<serde_json::Value>(data)
+        && let Some(error_msg) = err_resp["error"]["message"].as_str() {
             let _ = tx.send(StreamEvent::Error(AppError::Api {
                 status: 0,
                 body: Some(error_msg.to_string()),
             }));
             return true;
         }
-    }
     false
 }
 

@@ -41,9 +41,9 @@ pub fn RebuildModal() -> Element {
                 div {
                     class: "{css::modal_btn_confirm} btn-primary",
                     onclick: {
-                        let ui_store = ui_store.clone();
+                        let ui_store = ui_store;
                         move |_| {
-                            let mut ui_store = ui_store.clone();
+                            let mut ui_store = ui_store;
                             spawn(async move {
                                 let mut conv = use_conversation();
                                 conv.rebuild_vectors().await;
